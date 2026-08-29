@@ -1,0 +1,34 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# --- Test / coverage / type caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Runtime data (persisted memory + logs) ---
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/chroma/
+data/*.log
+scratch/
+scripts/diagnose.py
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

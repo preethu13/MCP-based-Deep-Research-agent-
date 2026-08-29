@@ -1,0 +1,18 @@
+# Streamlit theme — "The Night Desk"
+# A deep-ink research workspace with a warm brass desk-lamp accent.
+# Fine-grained typography + component styling is injected as CSS in src/ui/app.py.
+
+[theme]
+base = "dark"
+primaryColor = "#E8B15A"            # brass — the desk lamp
+backgroundColor = "#0E1626"         # deep ink
+secondaryBackgroundColor = "#16213A" # raised surface (sidebar / cards)
+textColor = "#ECE7DA"               # warm parchment
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

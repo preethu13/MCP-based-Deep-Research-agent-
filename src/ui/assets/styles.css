@@ -1,0 +1,133 @@
+/* ============================================================
+   The Night Desk — design system for the Deep Research Agent
+   A deep-ink research workspace lit by a single brass desk lamp.
+   Boldness is spent in two places only: the hero wordmark and the
+   live "research log". Everything else stays quiet and disciplined.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --ink:        #0E1626;
+  --ink-2:      #0A1120;
+  --surface:    #16213A;
+  --surface-2:  #1C2A47;
+  --line:       #2A3A5C;
+  --brass:      #E8B15A;
+  --brass-soft: #F2CE86;
+  --parch:      #ECE7DA;
+  --muted:      #93A1BC;
+  --ok:         #86C29A;
+  --warn:       #E8B15A;
+  --err:        #E37E6C;
+}
+
+/* --- base canvas + typography --- */
+.stApp {
+  background:
+    radial-gradient(1100px 520px at 78% -8%, rgba(232,177,90,0.10), transparent 60%),
+    radial-gradient(900px 600px at 0% 100%, rgba(111,160,211,0.06), transparent 55%),
+    var(--ink);
+  color: var(--parch);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+.block-container { padding-top: 2.2rem; max-width: 1180px; }
+
+h1, h2, h3, h4 { font-family: 'Fraunces', Georgia, serif; color: var(--parch); letter-spacing: -0.01em; }
+.stMarkdown p, .stMarkdown li { color: #D8D2C4; line-height: 1.62; }
+a, .stMarkdown a { color: var(--brass-soft); text-decoration: none; border-bottom: 1px solid rgba(242,206,134,0.35); }
+a:hover { border-bottom-color: var(--brass-soft); }
+
+/* --- hero --- */
+.hero { padding: 0.4rem 0 1.1rem; border-bottom: 1px solid var(--line); margin-bottom: 1.6rem; }
+.hero-eyebrow {
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem; letter-spacing: 0.34em;
+  color: var(--brass); text-transform: uppercase; margin-bottom: 0.55rem;
+}
+.hero-title {
+  font-family: 'Fraunces', serif; font-weight: 900; font-size: 3.5rem; line-height: 0.98;
+  margin: 0; color: var(--parch);
+}
+.hero-title .lamp { color: var(--brass); text-shadow: 0 0 26px rgba(232,177,90,0.45); }
+.hero-sub { color: var(--muted); font-size: 1.02rem; max-width: 60ch; margin-top: 0.7rem; }
+
+/* --- the research log (signature element) --- */
+.log { margin: 0.2rem 0 0.4rem; }
+.log-entry { position: relative; display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 0 0 2px; }
+.log-rail { position: relative; display: flex; justify-content: center; }
+.log-rail::before {
+  content: ""; position: absolute; top: 20px; bottom: -6px; left: 50%;
+  width: 1px; background: var(--line); transform: translateX(-0.5px);
+}
+.log-entry:last-child .log-rail::before { display: none; }
+.log-dot {
+  width: 11px; height: 11px; margin-top: 7px; border-radius: 50%;
+  background: var(--surface-2); border: 2px solid var(--muted); z-index: 1;
+}
+.status-ok   .log-dot { border-color: var(--ok);   box-shadow: 0 0 10px rgba(134,194,154,0.5); }
+.status-warn .log-dot { border-color: var(--warn); box-shadow: 0 0 10px rgba(232,177,90,0.55); }
+.status-error .log-dot{ border-color: var(--err);  box-shadow: 0 0 10px rgba(227,126,108,0.55); }
+.log-body { padding: 2px 0 14px; }
+.log-head { display: flex; align-items: baseline; gap: 10px; }
+.log-tool {
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem; letter-spacing: 0.08em;
+  color: var(--brass); text-transform: lowercase;
+  background: rgba(232,177,90,0.10); border: 1px solid rgba(232,177,90,0.22);
+  padding: 1px 7px; border-radius: 5px;
+}
+.log-step { font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: var(--muted); }
+.log-title { font-size: 0.94rem; color: var(--parch); margin-top: 4px; font-weight: 500; }
+.log-detail { font-family: 'IBM Plex Mono', monospace; font-size: 0.74rem; color: var(--muted); margin-top: 2px; }
+
+/* --- panels --- */
+.panel {
+  background: linear-gradient(180deg, var(--surface), var(--ink-2));
+  border: 1px solid var(--line); border-radius: 14px; padding: 1.15rem 1.3rem;
+}
+.panel-label {
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem; letter-spacing: 0.24em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 0.7rem;
+}
+
+/* --- the report "dossier" --- */
+.dossier { border-left: 2px solid var(--brass); padding-left: 1.1rem; }
+
+/* --- inputs / buttons --- */
+.stTextInput input, .stTextArea textarea {
+  background: var(--ink-2) !important; color: var(--parch) !important;
+  border: 1px solid var(--line) !important; border-radius: 10px !important;
+  font-family: 'IBM Plex Sans', sans-serif !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+  border-color: var(--brass) !important; box-shadow: 0 0 0 2px rgba(232,177,90,0.18) !important;
+}
+.stButton > button, .stDownloadButton > button {
+  background: var(--brass); color: #241a06; border: none; border-radius: 10px;
+  font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; letter-spacing: 0.01em;
+  padding: 0.5rem 1.1rem; transition: transform .05s ease, background .15s ease;
+}
+.stButton > button:hover, .stDownloadButton > button:hover { background: var(--brass-soft); color: #241a06; }
+.stButton > button:active { transform: translateY(1px); }
+.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
+  outline: 2px solid var(--brass-soft); outline-offset: 2px;
+}
+
+/* --- sidebar --- */
+[data-testid="stSidebar"] { background: var(--ink-2); border-right: 1px solid var(--line); }
+[data-testid="stSidebar"] .stMarkdown p { color: var(--muted); }
+
+/* --- tables in the rendered report --- */
+.stMarkdown table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+.stMarkdown th { background: var(--surface-2); color: var(--parch); text-align: left; padding: 8px 12px; border: 1px solid var(--line); }
+.stMarkdown td { padding: 8px 12px; border: 1px solid var(--line); color: #D8D2C4; }
+
+/* --- misc --- */
+hr { border-color: var(--line); }
+.badge {
+  display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;
+  padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+}
+.badge.on  { color: var(--ok);  border-color: rgba(134,194,154,0.4); }
+.badge.off { color: var(--err); border-color: rgba(227,126,108,0.4); }
+#MainMenu, footer { visibility: hidden; }

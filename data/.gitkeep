@@ -1,0 +1,2 @@
+# This file keeps the data/ directory under version control.
+# Runtime artifacts (research.db, chroma/, agent.log) are gitignored.

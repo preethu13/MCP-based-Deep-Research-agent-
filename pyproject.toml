@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-deep-research-agent"
+version = "1.0.0"
+description = "An autonomous, locally-run, $0-cost deep research agent built on the Model Context Protocol."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Deep Research Agent" }]
+keywords = ["mcp", "langgraph", "ollama", "research-agent", "rag", "local-llm"]
+
+# Runtime deps are pinned in requirements.txt; mirrored here for `pip install -e .`
+dependencies = [
+    "fastmcp>=2.3.0",
+    "langgraph>=0.2.28",
+    "ollama>=0.3.3",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0.1",
+    "duckduckgo-search>=6.3.0",
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "playwright>=1.44",
+    "chromadb>=0.5.5",
+    "typer>=0.12",
+    "rich>=13.7",
+    "streamlit>=1.36",
+]
+
+[project.scripts]
+research = "src.cli.main:app"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+# ─────────────────────────────────────────────────────────────
+# Ruff — linting
+# ─────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+# E/F pyflakes+pycodestyle, I import-sort, UP pyupgrade, B bugbear, SIM simplify
+select = ["E", "F", "I", "UP", "B", "SIM", "W"]
+ignore = [
+    "E501",  # line length handled by formatter; long strings allowed
+    "B008",  # function call in default arg (Typer/FastMCP pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "SIM117"]
+
+# ─────────────────────────────────────────────────────────────
+# mypy — type checking (strict-ish on core modules)
+# ─────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["src.tools.*", "src.memory.*"]
+disallow_untyped_defs = true
+
+# ─────────────────────────────────────────────────────────────
+# pytest
+# ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests that require Ollama + network (deselect with -m 'not e2e')",
+]
+
+# ─────────────────────────────────────────────────────────────
+# coverage
+# ─────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/ui/*", "tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
