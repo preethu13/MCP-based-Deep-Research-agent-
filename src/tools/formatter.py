@@ -46,8 +46,70 @@ def _render_references(ordered: list[str]) -> str:
     if not ordered:
         return "## References\n\n_No sources were cited._\n"
     lines = ["## References", ""]
-    lines += [f"{i}. {cite}" for i, cite in enumerate(ordered, start=1)]
+    for i, cite in enumerate(ordered, start=1):
+        lines.append(f"{i}. {cite}")
     return "\n".join(lines) + "\n"
+
+
+def _collect_papers(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract distinct paper objects from findings."""
+    seen_urls = set()
+    papers: list[dict[str, Any]] = []
+    for f in findings:
+        for p in f.get("papers", []) or []:
+            url = p.get("url", "")
+            title = p.get("title", "")
+            if (url or title) and url not in seen_urls:
+                if url:
+                    seen_urls.add(url)
+                papers.append(p)
+    return papers
+
+
+def _render_papers_section(papers: list[dict[str, Any]]) -> list[str]:
+    """Format academic papers with direct links, authors, year, and detailed summaries."""
+    if not papers:
+        return []
+
+    lines = [
+        "## Research Papers & Literature",
+        "",
+        f"The following {len(papers)} peer-reviewed paper(s) and scientific studies were analyzed:",
+        "",
+    ]
+    for i, paper in enumerate(papers, start=1):
+        title = paper.get("title") or "Untitled Paper"
+        url = paper.get("url") or ""
+        pdf_url = paper.get("pdf_url") or ""
+        author = paper.get("author") or ", ".join(paper.get("authors", [])[:3]) or "Authors not listed"
+        year = paper.get("year") or "n.d."
+        venue = paper.get("venue") or ""
+        summary = (paper.get("summary") or paper.get("abstract") or "No abstract available.").strip()
+
+        # Clickable title header
+        title_md = f"[{title}]({url})" if url else title
+        lines.append(f"### {i}. 📄 {title_md}")
+
+        meta_parts = [f"**Authors:** {author}", f"**Year:** {year}"]
+        if venue:
+            meta_parts.append(f"**Venue:** {venue}")
+        lines.append(" | ".join(meta_parts))
+        lines.append("")
+
+        link_parts = []
+        if url:
+            link_parts.append(f"[🔗 View Paper / DOI]({url})")
+        if pdf_url and pdf_url != url:
+            link_parts.append(f"[📥 Direct PDF]({pdf_url})")
+        if link_parts:
+            lines.append(" · ".join(link_parts))
+            lines.append("")
+
+        lines.append(f"**Summary & Key Contributions:**")
+        lines.append(f"> {summary}")
+        lines.append("")
+
+    return lines
 
 
 def _first_sentence(text: str) -> str:
@@ -70,7 +132,13 @@ def _render_brief(findings, query, generated_on, ordered, index) -> str:
         claim = finding.get("claim", "").strip()
         suffix = f" {marker}" if marker else ""
         lines.append(f"- {claim}{suffix}")
-    lines += ["", _render_references(ordered)]
+    lines.append("")
+
+    papers = _collect_papers(findings)
+    if papers:
+        lines += _render_papers_section(papers)
+
+    lines += [_render_references(ordered)]
     return "\n".join(lines)
 
 
@@ -85,6 +153,13 @@ def _render_report(findings, query, generated_on, ordered, index) -> str:
         "",
         f"This report addresses {len(findings)} sub-question(s). {summary}",
         "",
+    ]
+
+    papers = _collect_papers(findings)
+    if papers:
+        lines += _render_papers_section(papers)
+
+    lines += [
         "## Findings",
         "",
     ]
@@ -94,6 +169,7 @@ def _render_report(findings, query, generated_on, ordered, index) -> str:
         claim = finding.get("claim", "").strip()
         suffix = f" {marker}" if marker else ""
         lines += [f"### {sub_q}", "", f"{claim}{suffix}", ""]
+
     lines.append(_render_references(ordered))
     return "\n".join(lines)
 
@@ -130,6 +206,11 @@ def _render_comparison(findings, query, generated_on, ordered, index) -> str:
             sub_q = (finding.get("sub_question") or "—").replace("|", "\\|")
             claim = finding.get("claim", "").replace("|", "\\|").replace("\n", " ")
             lines.append(f"| {sub_q} | {claim} | {_markers(finding, index) or '—'} |")
+
+    lines.append("")
+    papers = _collect_papers(findings)
+    if papers:
+        lines += _render_papers_section(papers)
 
     lines += ["", _render_references(ordered)]
     return "\n".join(lines)

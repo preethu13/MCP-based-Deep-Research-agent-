@@ -9,8 +9,9 @@ from src.agent.state import AgentDeps, ResearchState, make_event
 
 _SYSTEM = (
     "You are a meticulous research planner. Given a user's question, break it into "
-    "2 to 5 focused, non-overlapping sub-questions that together fully answer it. "
-    "Return ONLY a JSON array of strings, nothing else."
+    "2 to 3 concise, highly focused research sub-questions that explore the academic literature. "
+    "Each sub-question must explicitly preserve the core subject topic keywords so that academic "
+    "indexes can retrieve precise papers. Return ONLY a JSON array of strings, nothing else."
 )
 
 
@@ -30,21 +31,21 @@ def planner_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
 
     user = (
         f"User question: {query}\n"
-        f"Desired output format: {fmt}.\n"
-        "If the format is 'comparison', make each sub-question about one entity being compared."
+        f"Desired format: {fmt}.\n"
+        "Return ONLY a JSON array of 2 to 3 concise sub-questions."
     )
 
     sub_questions: list[str] = []
     try:
-        data = deps.llm.complete_json(_SYSTEM, user)
+        data = deps.llm.complete_json(_SYSTEM, user, max_tokens=90)
         if isinstance(data, dict):
             data = data.get("sub_questions") or data.get("questions") or []
-        sub_questions = [str(x).strip() for x in data if str(x).strip()][:5]
+        sub_questions = [str(x).strip() for x in data if str(x).strip()][:3]
     except Exception:
         sub_questions = []
 
     if not sub_questions:
-        sub_questions = _heuristic_decompose(query)
+        sub_questions = _heuristic_decompose(query)[:3]
 
     trace.append(
         make_event(

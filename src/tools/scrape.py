@@ -79,9 +79,10 @@ def _render_with_playwright(url: str, user_agent: str, timeout: int) -> str | No
 
 def scrape_page(
     url: str,
-    timeout: int = 30,
+    timeout: int = 8,
     user_agent: str = "DeepResearchAgent/1.0",
     respect_robots: bool = True,
+    enable_playwright: bool = False,
 ) -> dict[str, Any]:
     """Fetch and extract clean text content from a web page.
 
@@ -122,8 +123,8 @@ def scrape_page(
         result.update(error=f"fetch failed: {exc}", method_used="failed")
         return result
 
-    # --- Playwright fallback for thin/JS pages ---
-    if len(result["text"]) < _MIN_USABLE_CHARS:
+    # --- Playwright fallback for thin/JS pages (only if explicitly enabled) ---
+    if enable_playwright and len(result["text"]) < _MIN_USABLE_CHARS:
         html = _render_with_playwright(url, user_agent, timeout)
         if html:
             title, text = _extract_text(html)

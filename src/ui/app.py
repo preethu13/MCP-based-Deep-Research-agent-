@@ -12,9 +12,15 @@ Launch with::
 from __future__ import annotations
 
 import html
+import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+# Ensure project root is in sys.path when running via `streamlit run src/ui/app.py`
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st
 
@@ -207,7 +213,13 @@ def main() -> None:
 def _run_research(query: str, fmt: str, style: str, demo: bool, log_slot: Any) -> None:
     agent = get_agent(demo)
     final: dict[str, Any] = {}
-    steps = ["Planning your question...", "Searching the web...", "Reading sources...", "Synthesizing findings...", "Formatting report..."]
+    steps = [
+        "Analyzing research question...",
+        "Retrieving academic papers & literature...",
+        "Analyzing paper abstracts & methodology...",
+        "Synthesizing cross-paper findings...",
+        "Compiling research dossier...",
+    ]
     step_i = 0
     try:
         with st.spinner(f"🔍 {steps[step_i]}"):

@@ -72,19 +72,24 @@ class OllamaLLM:
             self._client_obj = ollama.Client(host=self.host)
         return self._client_obj
 
-    def complete(self, system: str, user: str, temperature: float | None = None) -> str:
+    def complete(self, system: str, user: str, temperature: float | None = None, max_tokens: int = 350) -> str:
+        options: dict[str, Any] = {
+            "temperature": self.temperature if temperature is None else temperature,
+        }
+        if max_tokens > 0:
+            options["num_predict"] = max_tokens
         resp = self._client().chat(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            options={"temperature": self.temperature if temperature is None else temperature},
+            options=options,
         )
         return str(_extract(resp, "message", "content")).strip()
 
-    def complete_json(self, system: str, user: str, temperature: float | None = None) -> Any:
-        raw = self.complete(system, user, temperature)
+    def complete_json(self, system: str, user: str, temperature: float | None = None, max_tokens: int = 350) -> Any:
+        raw = self.complete(system, user, temperature, max_tokens=max_tokens)
         return loads_lenient(raw)
 
     def ping(self) -> tuple[bool, str]:

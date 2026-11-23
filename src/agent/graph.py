@@ -67,7 +67,18 @@ class ResearchAgent:
     ) -> ResearchAgent:
         settings = settings or get_settings()
         tools = ToolClient.from_settings(settings, embeddings=embeddings)
-        llm = llm or OllamaLLM(settings.chat_model, settings.ollama_host, settings.llm_temperature)
+        if llm is None:
+            if settings.llm_provider == "openai" or bool(settings.openai_api_key):
+                from src.agent.api_llm import OpenAILLM
+
+                llm = OpenAILLM(
+                    api_key=settings.openai_api_key,
+                    model=settings.openai_model,
+                    base_url=settings.openai_base_url,
+                    temperature=settings.llm_temperature,
+                )
+            else:
+                llm = OllamaLLM(settings.chat_model, settings.ollama_host, settings.llm_temperature)
         deps = AgentDeps(llm=llm, tools=tools, sqlite=tools.sqlite, settings=settings)
         return cls(deps)
 

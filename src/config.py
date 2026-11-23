@@ -54,6 +54,13 @@ class Settings:
     embed_model: str = "nomic-embed-text"
     llm_temperature: float = 0.2
 
+    # API Keys / Cloud LLM (OpenAI, Groq, DeepSeek, OpenRouter)
+    llm_provider: str = "ollama"  # "ollama" or "openai"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_embed_model: str = "text-embedding-3-small"
+
     # Storage
     db_path: Path = Path("data/research.db")
     chroma_dir: Path = Path("data/chroma")
@@ -86,6 +93,11 @@ def get_settings() -> Settings:
         chat_model=_get_str("OLLAMA_CHAT_MODEL", "llama3.1:8b"),
         embed_model=_get_str("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
         llm_temperature=_get_float("LLM_TEMPERATURE", 0.2),
+        llm_provider=_get_str("LLM_PROVIDER", "openai" if os.getenv("OPENAI_API_KEY") else "ollama"),
+        openai_api_key=_get_str("OPENAI_API_KEY", ""),
+        openai_model=_get_str("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_base_url=_get_str("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_embed_model=_get_str("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
         db_path=Path(_get_str("RESEARCH_DB_PATH", "data/research.db")),
         chroma_dir=Path(_get_str("CHROMA_DIR", "data/chroma")),
         log_file=Path(_get_str("LOG_FILE", "data/agent.log")),

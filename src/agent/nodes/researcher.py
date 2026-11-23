@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.state import AgentDeps, ResearchState, make_event
+from src.tools.search import clean_search_query, score_paper_relevance
 
 _MIN_SCRAPE_WORDS = 5   # keep even short snippets — something beats nothing
 _MAX_CONTEXT_CHARS = 6000
@@ -64,15 +65,50 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             research.append(item)
             continue
 
-        # 3. web search
-        results = deps.tools.web_search(sub_q, settings.max_results_per_query)
+        main_query = state.get("query", "")
+        search_q = clean_search_query(sub_q, main_query)
+
+        # 3. Academic paper and web search with focused keywords
+        academic_fn = getattr(deps.tools, "search_academic_papers", None)
+        paper_results: list[dict[str, Any]] = []
+        if callable(academic_fn):
+            paper_results = academic_fn(search_q, max_results=settings.max_results_per_query)
+            # Supplement with root topic if few papers returned
+            if len(paper_results) < 2 and main_query and main_query != search_q:
+                extra = academic_fn(main_query, max_results=settings.max_results_per_query)
+                seen_titles = {p.get("title") for p in paper_results}
+                for ep in extra:
+                    if ep.get("title") not in seen_titles:
+                        paper_results.append(ep)
+
+        web_results = deps.tools.web_search(search_q, settings.max_results_per_query)
+
+        # Merge, prioritizing academic papers with verified abstracts
+        seen_urls = set()
+        candidates: list[dict[str, Any]] = []
+        for r in paper_results + web_results:
+            u = r.get("url", "")
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                candidates.append(r)
+
+        # Relevance scoring & re-ranking against main research topic
+        scored = [(score_paper_relevance(c, main_query), c) for c in candidates]
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Retain relevant candidates (positive relevance score)
+        results = [c for s, c in scored if s >= 0.5]
+        if not results and scored:
+            # Fall back to best candidate if filter was too strict
+            results = [scored[0][1]]
+
         trace.append(
             make_event(
                 len(trace) + 1,
                 "researcher",
                 "web_search",
-                f"Searched the web · {sub_q[:60]}",
-                f"{len(results)} result(s)",
+                f"Retrieved academic sources · {search_q[:60]}",
+                f"{len(results)} relevant source(s) ({len([r for r in results if r.get('is_paper')])} paper(s))",
                 "ok" if results else "warn",
             )
         )
@@ -81,11 +117,20 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             research.append(item)
             continue
 
-        # 4. scrape top sources in parallel with graceful degradation
+        # 4. Gather source text (fast-path: papers with abstracts skip network scraping)
         targets = results[: settings.sources_to_scrape]
         from concurrent.futures import ThreadPoolExecutor
 
         def _fetch_one(res: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+            if res.get("abstract"):
+                # Paper with authentic abstract already in hand — instant retrieval
+                return res, {
+                    "url": res["url"],
+                    "title": res.get("title", ""),
+                    "text": res["abstract"],
+                    "word_count": len(res["abstract"].split()),
+                    "method_used": "academic_index",
+                }
             try:
                 scraped = deps.tools.scrape_page(res["url"])
             except Exception as exc:
@@ -120,9 +165,16 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             item["sources"].append(
                 {
                     "url": result["url"],
-                    "title": scraped.get("title") or result["title"],
+                    "title": scraped.get("title") or result.get("title"),
                     "text": combined_text,
                     "method": method,
+                    "author": result.get("author") or result.get("author_str", ""),
+                    "authors": result.get("authors", []),
+                    "year": result.get("year"),
+                    "venue": result.get("venue") or result.get("publisher", ""),
+                    "pdf_url": result.get("pdf_url", ""),
+                    "abstract": result.get("abstract", ""),
+                    "is_paper": result.get("is_paper", False),
                 }
             )
             trace.append(

@@ -122,6 +122,18 @@ a:hover { border-bottom-color: var(--brass-soft); }
 .stMarkdown th { background: var(--surface-2); color: var(--parch); text-align: left; padding: 8px 12px; border: 1px solid var(--line); }
 .stMarkdown td { padding: 8px 12px; border: 1px solid var(--line); color: #D8D2C4; }
 
+/* --- blockquotes for paper summaries --- */
+.stMarkdown blockquote {
+  border-left: 3px solid var(--brass);
+  background: rgba(22, 33, 58, 0.5);
+  padding: 0.8rem 1.2rem;
+  border-radius: 0 8px 8px 0;
+  margin: 0.5rem 0 1.2rem;
+  font-size: 0.92rem;
+  color: #D8D2C4;
+  line-height: 1.6;
+}
+
 /* --- misc --- */
 hr { border-color: var(--line); }
 .badge {

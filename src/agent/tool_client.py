@@ -21,6 +21,7 @@ from src.tools.formatter import format_output as _format_output
 from src.tools.memory import recall_memory as _recall_memory
 from src.tools.memory import store_memory as _store_memory
 from src.tools.scrape import scrape_page as _scrape_page
+from src.tools.search import search_academic_papers as _search_academic_papers
 from src.tools.search import web_search as _web_search
 
 
@@ -47,15 +48,34 @@ class ToolClient:
         sqlite = SQLiteStore(settings.db_path)
         sqlite.initialize()
         vector = VectorStore(settings.chroma_dir)
-        emb = embeddings or OllamaEmbeddings(settings.embed_model, settings.ollama_host)
+        if embeddings is not None:
+            emb = embeddings
+        elif settings.llm_provider == "openai" or bool(settings.openai_api_key):
+            from src.agent.api_llm import OpenAIEmbeddings
+
+            emb = OpenAIEmbeddings(
+                api_key=settings.openai_api_key,
+                model=settings.openai_embed_model,
+                base_url=settings.openai_base_url,
+            )
+        else:
+            emb = OllamaEmbeddings(settings.embed_model, settings.ollama_host)
         return cls(emb, sqlite, vector, settings)
 
     # -- web -----------------------------------------------------------
+    def search_academic_papers(self, query: str, max_results: int | None = None) -> list[dict[str, Any]]:
+        return _search_academic_papers(
+            query,
+            max_results or self.settings.max_results_per_query,
+            self.settings.search_timeout,
+        )
+
     def web_search(self, query: str, max_results: int | None = None) -> list[dict[str, Any]]:
         return _web_search(
             query,
             max_results or self.settings.max_results_per_query,
             self.settings.search_timeout,
+            include_papers=True,
         )
 
     def scrape_page(self, url: str) -> dict[str, Any]:

@@ -252,13 +252,18 @@ def doctor() -> None:
 
     agent = ResearchAgent.from_settings(settings)
     ok, message = agent.deps.llm.ping()
-    table.add_row("Ollama server", "[green]reachable[/green]" if ok else f"[red]unreachable[/red] ({message})")
-    table.add_row("Chat model", settings.chat_model)
-    table.add_row("Embedding model", settings.embed_model)
+    provider_name = "Cloud API (OpenAI-compatible)" if (settings.llm_provider == "openai" or settings.openai_api_key) else "Ollama (local)"
+    model_name = settings.openai_model if (settings.llm_provider == "openai" or settings.openai_api_key) else settings.chat_model
+    embed_name = settings.openai_embed_model if (settings.llm_provider == "openai" or settings.openai_api_key) else settings.embed_model
+
+    table.add_row("LLM Provider", provider_name)
+    table.add_row("LLM Status", "[green]reachable[/green]" if ok else f"[red]unreachable[/red] ({message})")
+    table.add_row("Chat model", model_name)
+    table.add_row("Embedding model", embed_name)
     table.add_row("SQLite", str(settings.db_path))
     table.add_row("ChromaDB", str(settings.chroma_dir))
     console.print(table)
-    if not ok:
+    if not ok and provider_name.startswith("Ollama"):
         console.print("[dim]Start Ollama with:  ollama serve[/dim]")
 
 

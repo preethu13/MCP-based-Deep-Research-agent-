@@ -35,14 +35,55 @@ _COMPARE_SYSTEM = (
 
 
 def _synthesize_claim(llm: Any, sub_q: str, context: str) -> str:
-    user = f"Sub-question: {sub_q}\n\nSources:\n{context}"
+    user = f"Sub-question: {sub_q}\n\nSources:\n{context[:3000]}"
     try:
-        claim = llm.complete(_SYNTH_SYSTEM, user).strip()
+        claim = llm.complete(_SYNTH_SYSTEM, user, max_tokens=200).strip()
         return claim or f"The sources did not yield a clear answer to: {sub_q}."
     except Exception:
         # LLM unreachable mid-run — degrade instead of crashing (FC-05/FC-07).
         snippet = context[:300].replace("\n", " ")
         return f"(Unverified) Based on the gathered sources: {snippet}…"
+
+
+def _clean_claim_item(x: Any) -> str:
+    if isinstance(x, dict):
+        val = x.get("finding") or x.get("claim") or x.get("answer") or x.get("summary")
+        if val:
+            return str(val).strip()
+        vals = list(x.values())
+        return str(vals[-1]).strip() if vals else ""
+    return str(x).strip()
+
+
+def _batch_synthesize_claims(llm: Any, items: list[tuple[str, str]]) -> list[str]:
+    """Synthesize findings for multiple sub-questions in a single fast LLM pass."""
+    if not items:
+        return []
+    if len(items) == 1:
+        return [_synthesize_claim(llm, items[0][0], items[0][1])]
+
+    prompt_parts = []
+    for idx, (sub_q, ctx) in enumerate(items, start=1):
+        prompt_parts.append(f"Sub-question {idx}: {sub_q}\nSources:\n{ctx[:1800]}")
+    user = "\n\n---\n\n".join(prompt_parts)
+
+    system = (
+        "You are an expert research analyst. For each sub-question below, write a clear, factual, "
+        "and informative 2-3 sentence key finding based on its provided sources.\n"
+        "Return ONLY a JSON array of strings: [\"finding for question 1\", \"finding for question 2\", ...]."
+    )
+    try:
+        data = llm.complete_json(system, user, max_tokens=300)
+        if isinstance(data, list) and len(data) == len(items):
+            return [_clean_claim_item(x) for x in data]
+        if isinstance(data, dict):
+            claims = data.get("findings") or data.get("claims") or list(data.values())
+            if isinstance(claims, list) and len(claims) == len(items):
+                return [_clean_claim_item(x) for x in claims]
+    except Exception:
+        pass
+
+    return [_synthesize_claim(llm, sub_q, ctx) for sub_q, ctx in items]
 
 
 def _persist(deps: AgentDeps, session_id: str, finding: dict[str, Any]) -> None:
@@ -110,17 +151,11 @@ def synthesizer_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     trace = list(state.get("trace", []))
 
+    valid_items = []
     for item in state.get("research", []):
         sub_q = item["sub_question"]
         sources = item.get("sources", [])
         memory_hits = item.get("memory_hits", [])
-
-        context_parts = [
-            f"[{i}] {s['title']}\nURL: {s['url']}\n{s['text']}"
-            for i, s in enumerate(sources, start=1)
-        ]
-        context_parts += [f"[memory] {m['content']}" for m in memory_hits]
-        context = "\n\n".join(context_parts)
 
         if not sources and not memory_hits:
             findings.append(
@@ -137,17 +172,68 @@ def synthesizer_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                     len(trace) + 1, "synthesizer", "synthesize", "No sources", sub_q[:80], "warn"
                 )
             )
-            continue
+        else:
+            context_parts = [
+                f"[{i}] {s['title']}\nURL: {s['url']}\n{s['text']}"
+                for i, s in enumerate(sources, start=1)
+            ]
+            context_parts += [f"[memory] {m['content']}" for m in memory_hits]
+            valid_items.append((item, sub_q, "\n\n".join(context_parts)))
 
-        claim = _synthesize_claim(deps.llm, sub_q, context)
+    # Batch synthesize all findings in a single fast LLM pass
+    synthesized_claims = _batch_synthesize_claims(
+        deps.llm, [(sub_q, ctx) for _, sub_q, ctx in valid_items]
+    )
+
+    for (item, sub_q, _), claim in zip(valid_items, synthesized_claims):
+        sources = item.get("sources", [])
         citations = [deps.tools.generate_citation(s, style) for s in sources]
-        used_sources = [{"url": s["url"], "title": s["title"]} for s in sources]
+        used_sources = [
+            {
+                "url": s["url"],
+                "title": s["title"],
+                "author": s.get("author", ""),
+                "year": s.get("year"),
+                "publisher": s.get("venue") or s.get("publisher", ""),
+            }
+            for s in sources
+        ]
+
+        # Collect structured paper entries for academic literature presentation
+        papers = []
+        for s in sources:
+            is_academic = (
+                s.get("is_paper")
+                or bool(s.get("abstract"))
+                or "doi.org" in s.get("url", "")
+                or "arxiv.org" in s.get("url", "")
+                or "openalex.org" in s.get("url", "")
+            )
+            abstract_text = s.get("abstract") or s.get("text", "")
+            summary_clean = abstract_text.strip()
+            if len(summary_clean) > 800:
+                summary_clean = summary_clean[:800] + "…"
+
+            papers.append(
+                {
+                    "title": s.get("title", ""),
+                    "url": s.get("url", ""),
+                    "pdf_url": s.get("pdf_url", ""),
+                    "author": s.get("author", ""),
+                    "authors": s.get("authors", []),
+                    "year": s.get("year"),
+                    "venue": s.get("venue", ""),
+                    "summary": summary_clean,
+                    "is_paper": is_academic,
+                }
+            )
 
         finding = {
             "sub_question": sub_q,
             "claim": claim,
             "citations": citations,
             "sources": used_sources,
+            "papers": papers,
             "confidence": 0.9 if sources else 0.5,
         }
         _persist(deps, state["session_id"], finding)
