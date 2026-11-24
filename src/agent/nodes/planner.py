@@ -8,20 +8,32 @@ from typing import Any
 from src.agent.state import AgentDeps, ResearchState, make_event
 
 _SYSTEM = (
-    "You are a meticulous research planner. Given a user's question, break it into "
-    "2 to 3 concise, highly focused research sub-questions that explore the academic literature. "
-    "Each sub-question must explicitly preserve the core subject topic keywords so that academic "
-    "indexes can retrieve precise papers. Return ONLY a JSON array of strings, nothing else."
+    "You are an expert scientific research planner. Given a user's research topic, generate "
+    "2 to 3 concise, highly focused academic sub-questions to guide literature retrieval.\n"
+    "CRITICAL RULES:\n"
+    "1. Every single sub-question MUST explicitly preserve the exact core topic phrase "
+    "(e.g., if the topic is 'Context Rot', every sub-question must contain 'context rot').\n"
+    "2. Do NOT dilute the topic with unrelated domains, generic buzzwords, or broad questions.\n"
+    "3. Structure the sub-questions around: (a) definition and mechanisms, "
+    "(b) empirical performance impact and causes, and (c) mitigation strategies or architectures.\n"
+    "4. Return ONLY a JSON array of 2 to 3 question strings, nothing else."
 )
 
 
 def _heuristic_decompose(query: str) -> list[str]:
     """Fallback decomposition when the LLM is unavailable or returns junk."""
-    parts = re.split(r"\s+vs\.?\s+|\s+versus\s+|,\s*", query, flags=re.IGNORECASE)
-    parts = [p.strip() for p in parts if p.strip()]
-    if len(parts) >= 2:
-        return [f"What are the key characteristics and trade-offs of {p}?" for p in parts[:5]]
-    return [query]
+    clean_topic = re.sub(
+        r"^(what\s+is|what\s+are|how\s+does|how\s+do|why\s+is|why\s+are|tell\s+me\s+about)\s+",
+        "",
+        query.strip(),
+        flags=re.IGNORECASE
+    ).rstrip("?").strip() or query.strip()
+
+    return [
+        f"What is the definition and core mechanism of {clean_topic}?",
+        f"What are the causes and empirical effects of {clean_topic}?",
+        f"What are the primary mitigation strategies and architectures for {clean_topic}?",
+    ]
 
 
 def planner_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:

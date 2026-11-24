@@ -23,83 +23,261 @@ except ImportError:  # pragma: no cover
         DDGS = None  # type: ignore[assignment]
 
 
-def clean_search_query(sub_q: str, main_query: str = "") -> str:
-    """Extracts concise, targeted search keywords from conversational sub-questions."""
-    stopwords = {
-        "what", "how", "why", "when", "where", "which", "who", "whom", "whose",
-        "is", "are", "was", "were", "be", "been", "being",
-        "do", "does", "did", "have", "has", "had", "having",
-        "the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "with", "by", "about",
-        "potential", "primary", "current", "real-world", "real", "world", "key",
-        "causes", "mechanisms", "consequences", "strategies", "methods", "approaches", "mitigate"
+RELEVANCE_THRESHOLD = 6.0
+
+_STOPWORDS = {
+    "what", "how", "why", "when", "where", "which", "who", "whom", "whose",
+    "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "have", "has", "had", "having",
+    "the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "with", "by", "about",
+    "of", "from", "into", "through", "during", "before", "after", "above", "below",
+    "between", "under", "again", "further", "then", "once", "here", "there", "all", "any",
+    "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+    "only", "own", "same", "so", "than", "too", "very", "can", "will", "just", "should", "now",
+    "potential", "primary", "current", "real-world", "real", "world", "key",
+    "causes", "mechanisms", "consequences", "strategies", "methods", "approaches", "mitigate",
+    "mitigation", "contribute", "contributes", "impact", "impacts", "role", "roles"
+}
+
+
+def extract_query_concepts(query: str) -> dict[str, Any]:
+    """Extracts core phrases, keywords, and acronyms from a query."""
+    clean_q = query.lower().strip()
+    norm_text = re.sub(r"[^a-zA-Z0-9\s-]", " ", clean_q)
+    words = [w for w in norm_text.split() if w and w not in _STOPWORDS]
+
+    # Generate bigrams and trigrams
+    phrases = []
+    tokens = norm_text.split()
+    for i in range(len(tokens) - 1):
+        w1, w2 = tokens[i], tokens[i + 1]
+        if w1 not in _STOPWORDS and w2 not in _STOPWORDS:
+            phrases.append(f"{w1} {w2}")
+        elif i + 2 < len(tokens):
+            w3 = tokens[i + 2]
+            if w1 not in _STOPWORDS and w3 not in _STOPWORDS:
+                phrases.append(f"{w1} {w2} {w3}")
+
+    acronyms = [a.lower() for a in re.findall(r"\b[A-Z]{2,}\b", query)]
+
+    return {
+        "raw": query,
+        "clean": clean_q,
+        "words": words,
+        "phrases": phrases,
+        "acronyms": acronyms,
     }
-    words = re.findall(r"[A-Za-z0-9_-]+", sub_q)
-    filtered = [w for w in words if w.lower() not in stopwords]
 
-    main_words = re.findall(r"[A-Za-z0-9_-]+", main_query) if main_query else []
-    main_keywords = [
-        w for w in main_words
-        if w.lower() not in {"in", "on", "at", "the", "a", "an", "of", "for", "with", "by", "to", "and", "or", "is", "are"}
-    ]
 
-    combined = []
-    seen = set()
-    for w in main_keywords + filtered:
-        wl = w.lower()
-        if wl not in seen:
-            seen.add(wl)
-            combined.append(w)
+def clean_search_query(sub_q: str, main_query: str = "") -> str:
+    """Extracts concise, targeted search keywords from conversational sub-questions.
 
-    return " ".join(combined[:6]) if combined else sub_q
+    Ensures the core topic phrase is kept intact and not diluted by noise words.
+    """
+    sub_info = extract_query_concepts(sub_q)
+    main_info = extract_query_concepts(main_query) if main_query else None
+
+    # Check if main_query has a specific multi-word phrase (e.g. "context rot")
+    main_phrase = main_info["phrases"][0] if main_info and main_info["phrases"] else ""
+
+    # If main_phrase exists and is NOT in sub_q, anchor sub_q with main_phrase
+    if main_phrase and main_phrase not in sub_q.lower():
+        sub_words = [w for w in sub_info["words"] if w not in _STOPWORDS]
+        aspects = " ".join(sub_words[:2])
+        return f'"{main_phrase}" {aspects}'.strip()
+
+    # Otherwise, clean sub_q directly:
+    if sub_info["phrases"]:
+        core_phrase = sub_info["phrases"][0]
+        other_words = [w for w in sub_info["words"] if w not in core_phrase.split() and w not in _STOPWORDS]
+        aspects = " ".join(other_words[:2])
+        return f'"{core_phrase}" {aspects}'.strip()
+    elif sub_info["words"]:
+        return " ".join(sub_info["words"][:4])
+
+    return sub_q.strip()
+
+
+def refine_search_queries(main_query: str, sub_q: str = "") -> list[str]:
+    """Generates fallback refinement queries when initial retrieval yields 0 relevant papers."""
+    main_info = extract_query_concepts(main_query)
+    clean_main = " ".join(main_info["words"])
+    refinements = []
+
+    # 1. Exact quoted core phrase
+    if main_info["phrases"]:
+        refinements.append(f'"{main_info["phrases"][0]}"')
+
+    # 2. Quoted phrase + "llm" or "artificial intelligence" if tech topic
+    if main_info["phrases"] and "llm" not in main_info["words"]:
+        refinements.append(f'"{main_info["phrases"][0]}" llm')
+
+    # 3. Cleaned main query terms
+    if clean_main and clean_main not in refinements:
+        refinements.append(clean_main)
+
+    # 4. Raw main query stripped of punctuation
+    raw_clean = re.sub(r'[^\w\s-]', '', main_query).strip()
+    if raw_clean and raw_clean not in refinements:
+        refinements.append(raw_clean)
+
+    return [r for r in refinements if r.strip()]
 
 
 def score_paper_relevance(paper: dict[str, Any], root_query: str) -> float:
     """Scores paper relevance against the user's research topic.
 
-    Higher is better. Negative or low scores indicate irrelevant/off-topic papers.
+    Considers phrase matching, core concept coverage, and handles acronym collisions
+    and domain mismatches. Higher is better. A score < RELEVANCE_THRESHOLD (6.0)
+    indicates an irrelevant or off-topic paper.
     """
-    stopwords = {
-        "in", "on", "at", "the", "a", "an", "of", "for", "with", "by", "to", "and", "or", "is", "are",
-        "what", "how", "why", "who", "when", "which",
-    }
-    q_words = [w.lower() for w in re.findall(r"[A-Za-z0-9_-]+", root_query) if w.lower() not in stopwords]
-    if not q_words:
-        return 1.0
+    title = (paper.get("title") or "").strip()
+    abstract = (
+        paper.get("abstract")
+        or paper.get("snippet")
+        or paper.get("text")
+        or ""
+    ).strip()
+    if not title:
+        return 0.0
 
-    title = (paper.get("title") or "").lower()
-    abstract = (paper.get("abstract") or "").lower()
+    title_lower = title.lower()
+    abstract_lower = abstract.lower()
+    combined_text = f"{title_lower} {abstract_lower}"
+
+    q_info = extract_query_concepts(root_query)
+    q_words = q_info["words"]
+    q_phrases = q_info["phrases"]
+    raw_query_lower = q_info["clean"]
+
+    if not q_words and not q_phrases:
+        return 1.0
 
     score = 0.0
 
-    # 1. Exact phrase match in title (massive boost) or abstract
-    clean_q = " ".join(q_words)
-    if clean_q in title:
-        score += 10.0
-    elif clean_q in abstract:
-        score += 5.0
+    # 1. Exact raw query match in title (massive indicator) or abstract
+    if raw_query_lower in title_lower:
+        score += 25.0
+    elif raw_query_lower in abstract_lower:
+        score += 12.0
+    elif len(q_words) == 1 and q_words[0] in title_lower:
+        # Single-word topic exact match in title (e.g. "Redis", "Kubernetes")
+        score += 20.0
+    elif len(q_words) == 1 and q_words[0] in abstract_lower:
+        # Single-word topic match in abstract (e.g. "Redis is an in-memory...")
+        score += 8.0
+        if len(re.findall(r"\b" + re.escape(q_words[0]) + r"\b", abstract_lower)) >= 2:
+            score += 3.0
 
-    # 2. Check individual key words
-    matched_title_words = sum(1 for w in q_words if re.search(r"\b" + re.escape(w) + r"\b", title))
-    matched_abs_words = sum(1 for w in q_words if re.search(r"\b" + re.escape(w) + r"\b", abstract))
+    # 2. Key phrase matching (e.g. "context rot", "attention mechanism")
+    for phrase in q_phrases:
+        if phrase in title_lower:
+            score += 15.0
+        elif phrase in abstract_lower:
+            score += 7.0
 
-    score += matched_title_words * 3.0
-    score += matched_abs_words * 1.0
+    # 3. Individual word coverage
+    matched_words = [w for w in q_words if re.search(r"\b" + re.escape(w) + r"\b", combined_text)]
+    coverage_ratio = len(matched_words) / max(len(q_words), 1)
 
-    # 3. Off-topic false-friend check (e.g. Concept-ROT acronym when query is context rot)
+    if len(q_words) > 1:
+        if coverage_ratio == 1.0:
+            score += 6.0
+        elif coverage_ratio >= 0.75:
+            score += 3.0
+
+    for w in q_words:
+        if re.search(r"\b" + re.escape(w) + r"\b", title_lower):
+            score += 4.0
+        elif re.search(r"\b" + re.escape(w) + r"\b", abstract_lower):
+            score += 2.0
+
+    # 4. Strict concept requirements and false-friend / acronym disambiguation
+    # A) "Context Rot"
     if "context" in q_words and "rot" in q_words:
-        has_context_signal = (
-            "context" in title or "context" in abstract or "long-context" in title or "long-context" in abstract
+        has_context_rot_phrase = "context rot" in combined_text or "context-rot" in combined_text
+        has_context_degradation = "context" in combined_text and any(
+            term in combined_text
+            for term in [
+                "degradation", "degrades", "decay", "attention loss", "coherence failure",
+                "long-context", "long context", "effective context", "context length"
+            ]
         )
-        if not has_context_signal:
-            score -= 10.0
+        has_rot = bool(re.search(r"\brot\b|\brots\b", combined_text))
 
-    # 4. Filter unrelated domains (e.g. stock investing, financial bias) if query did not mention them
-    irrelevant_domains = {"investing", "stock market", "portfolio", "equity", "financial markets", "real estate"}
-    if not any(w in root_query.lower() for w in irrelevant_domains):
-        if any(w in title for w in irrelevant_domains):
-            score -= 15.0
+        if not (has_context_rot_phrase or (has_rot and has_context_degradation)):
+            return -25.0
+
+        # Disambiguate "RoT: Reflection on Trees", "Concept-ROT", "Root of Trust"
+        if re.search(r"\b(reflection on (search )?trees|model editing|poisoning concepts|root of trust)\b", combined_text):
+            if not has_context_rot_phrase:
+                return -30.0
+
+        # Disambiguate social media "brain rot"
+        if "brain rot" in combined_text and not has_context_rot_phrase:
+            return -30.0
+
+    # B) "Retrieval-Augmented Generation" / "RAG"
+    if any(term in q_words for term in ["rag", "retrieval-augmented", "retrieval augmented"]):
+        bio_terms = ["gene", "recombination", "antigen", "lymphocyte", "rag1", "rag2", "dna cleavage", "immune system", "v(d)j"]
+        if any(b in combined_text for b in bio_terms):
+            if not any(ai_term in combined_text for ai_term in ["language model", "llm", "nlp", "generation", "document retrieval"]):
+                return -35.0
+        if "red-amber-green" in combined_text or "red amber green" in combined_text:
+            return -35.0
+
+    # C) "Transformer Attention Mechanism"
+    if "attention" in q_words and ("transformer" in q_words or "transformers" in q_words or "mechanism" in q_words):
+        psych_terms = ["adhd", "schizophrenia", "children", "psychological", "deficit hyperactivity", "pediatric"]
+        if any(m in combined_text for m in psych_terms):
+            if not any(dl in combined_text for dl in ["neural network", "transformer", "bert", "gpt", "deep learning"]):
+                return -35.0
+
+    # D) "Hallucination in Large Language Models"
+    if "hallucination" in q_words and any(w in q_words for w in ["llm", "llms", "language", "models"]):
+        clinical_psych = ["psychosis", "schizophrenia", "bipolar", "visual hallucination", "auditory hallucination", "antipsychotic"]
+        if any(p in combined_text for p in clinical_psych):
+            if not any(nlp in combined_text for nlp in ["language model", "llm", "text generation", "gpt", "nlp"]):
+                return -35.0
+
+    # E) "Vector Database Retrieval"
+    if "vector" in q_words and ("database" in q_words or "retrieval" in q_words):
+        bio_vectors = ["mosquito", "malaria", "dengue", "aedes", "parasite", "viral vector", "plasmid", "insecticide"]
+        if any(bv in combined_text for bv in bio_vectors):
+            if not any(db in combined_text for db in ["database", "embedding", "nearest neighbor", "faiss", "milvus", "ann", "similarity search"]):
+                return -35.0
+
+    # 5. General domain penalty for completely unrelated finance/real estate
+    finance_terms = ["investing", "stock market", "portfolio management", "real estate", "equity trading"]
+    if not any(f in raw_query_lower for f in finance_terms):
+        if any(f in title_lower for f in finance_terms):
+            score -= 20.0
+
+    # 6. Coverage penalty: if less than half of significant query concepts match
+    if len(q_words) >= 2 and coverage_ratio < 0.5:
+        score -= 12.0
 
     return score
+
+
+def is_paper_relevant(paper: dict[str, Any], root_query: str, threshold: float = RELEVANCE_THRESHOLD) -> bool:
+    """Returns True if the paper scores at or above the relevance threshold."""
+    return score_paper_relevance(paper, root_query) >= threshold
+
+
+def is_candidate_relevant(
+    paper: dict[str, Any], root_query: str, sub_q: str = "", threshold: float = RELEVANCE_THRESHOLD
+) -> bool:
+    """Check relevance against root query and optional sub-question with hard false-friend exclusion."""
+    main_score = score_paper_relevance(paper, root_query)
+    if main_score < -10.0:
+        return False
+    if sub_q:
+        sub_score = score_paper_relevance(paper, sub_q)
+        if sub_score < -10.0:
+            return False
+        return max(main_score, sub_score) >= threshold
+    return main_score >= threshold
 
 
 def search_academic_papers(query: str, max_results: int = 5, timeout: int = 6) -> list[dict[str, Any]]:

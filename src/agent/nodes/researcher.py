@@ -14,7 +14,14 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.state import AgentDeps, ResearchState, make_event
-from src.tools.search import clean_search_query, score_paper_relevance
+from src.tools.search import (
+    RELEVANCE_THRESHOLD,
+    clean_search_query,
+    is_candidate_relevant,
+    is_paper_relevant,
+    refine_search_queries,
+    score_paper_relevance,
+)
 
 _MIN_SCRAPE_WORDS = 5   # keep even short snippets — something beats nothing
 _MAX_CONTEXT_CHARS = 6000
@@ -23,6 +30,7 @@ _MAX_CONTEXT_CHARS = 6000
 def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     settings = deps.settings
     session_id = state["session_id"]
+    main_query = state.get("query", "")
     research: list[dict[str, Any]] = []
     trace = list(state.get("trace", []))
     warnings = list(state.get("warnings", []))
@@ -35,72 +43,83 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             "used_memory": False,
         }
 
-        # 1. recall-before-search (cross-session recall via 'all')
-        hits = deps.tools.recall_memory("all", sub_q, top_k=5)
-        item["memory_hits"] = hits
+        def _score(c: dict[str, Any]) -> float:
+            m_s = score_paper_relevance(c, main_query)
+            if m_s < -10.0:
+                return m_s
+            s_s = score_paper_relevance(c, sub_q)
+            if s_s < -10.0:
+                return s_s
+            return max(m_s, s_s)
+
+        # 1. Recall memory as supplementary context only (never replaces fresh search)
+        raw_hits = deps.tools.recall_memory("all", sub_q, top_k=5)
+        # Validate memory relevance against the research topic before using
+        validated_hits = [
+            h for h in raw_hits
+            if _score({"title": h.get("content", "")[:120], "abstract": h.get("content", "")}) >= RELEVANCE_THRESHOLD
+        ]
+        item["memory_hits"] = validated_hits
         trace.append(
             make_event(
                 len(trace) + 1,
                 "researcher",
                 "recall_memory",
-                f"Checked memory · {sub_q[:60]}",
-                f"{len(hits)} relevant recollection(s)",
+                f"Checked memory (supplementary) · {sub_q[:60]}",
+                f"{len(validated_hits)} validated recollection(s) ({len(raw_hits)} raw)",
                 "ok",
             )
         )
 
-        # 2. short-circuit if memory already answers it
-        if len(hits) >= settings.recall_shortcircuit_hits:
-            item["used_memory"] = True
-            trace.append(
-                make_event(
-                    len(trace) + 1,
-                    "researcher",
-                    "recall_memory",
-                    "Answered from memory — skipped web search",
-                    sub_q[:80],
-                    "ok",
-                )
-            )
-            research.append(item)
-            continue
-
-        main_query = state.get("query", "")
+        # 2. Fresh Search & Retrieval (Primary evidence by default)
         search_q = clean_search_query(sub_q, main_query)
-
-        # 3. Academic paper and web search with focused keywords
         academic_fn = getattr(deps.tools, "search_academic_papers", None)
-        paper_results: list[dict[str, Any]] = []
-        if callable(academic_fn):
-            paper_results = academic_fn(search_q, max_results=settings.max_results_per_query)
-            # Supplement with root topic if few papers returned
-            if len(paper_results) < 2 and main_query and main_query != search_q:
-                extra = academic_fn(main_query, max_results=settings.max_results_per_query)
-                seen_titles = {p.get("title") for p in paper_results}
-                for ep in extra:
-                    if ep.get("title") not in seen_titles:
-                        paper_results.append(ep)
 
-        web_results = deps.tools.web_search(search_q, settings.max_results_per_query)
+        def _retrieve(q_str: str) -> list[dict[str, Any]]:
+            papers = []
+            if callable(academic_fn):
+                papers = academic_fn(q_str, max_results=settings.max_results_per_query)
+            webs = deps.tools.web_search(q_str, settings.max_results_per_query)
+            seen_u = set()
+            merged = []
+            for r in papers + webs:
+                u = r.get("url", "")
+                if u and u not in seen_u:
+                    seen_u.add(u)
+                    merged.append(r)
+            return merged
 
-        # Merge, prioritizing academic papers with verified abstracts
-        seen_urls = set()
-        candidates: list[dict[str, Any]] = []
-        for r in paper_results + web_results:
-            u = r.get("url", "")
-            if u and u not in seen_urls:
-                seen_urls.add(u)
-                candidates.append(r)
+        candidates = _retrieve(search_q)
 
-        # Relevance scoring & re-ranking against main research topic
-        scored = [(score_paper_relevance(c, main_query), c) for c in candidates]
+        # Score and filter candidates against main_query and sub_q
+        scored = [(_score(c), c) for c in candidates]
         scored.sort(key=lambda x: x[0], reverse=True)
+        results = [c for s, c in scored if s >= RELEVANCE_THRESHOLD]
 
-        # Retain relevant candidates (positive relevance score)
-        results = [c for s, c in scored if s >= 0.5]
-        if not results and scored:
-            # Fall back to best candidate if filter was too strict
-            results = [scored[0][1]]
+        # 3. Query Refinement if 0 candidates pass the relevance threshold
+        if not results:
+            refinements = refine_search_queries(main_query, sub_q)
+            for ref_q in refinements:
+                if ref_q == search_q:
+                    continue
+                ref_candidates = _retrieve(ref_q)
+                ref_scored = [(_score(c), c) for c in ref_candidates]
+                ref_scored.sort(key=lambda x: x[0], reverse=True)
+                passing = [c for s, c in ref_scored if s >= RELEVANCE_THRESHOLD]
+                if passing:
+                    results = passing
+                    break
+                    trace.append(
+                        make_event(
+                            len(trace) + 1,
+                            "researcher",
+                            "query_refinement",
+                            f"Refined search query · {ref_q[:60]}",
+                            f"Found {len(results)} relevant source(s)",
+                            "ok",
+                        )
+                    )
+                    break
 
         trace.append(
             make_event(
@@ -108,12 +127,14 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 "researcher",
                 "web_search",
                 f"Retrieved academic sources · {search_q[:60]}",
-                f"{len(results)} relevant source(s) ({len([r for r in results if r.get('is_paper')])} paper(s))",
+                f"{len(results)} verified relevant source(s) ({len([r for r in results if r.get('is_paper')])} paper(s))",
                 "ok" if results else "warn",
             )
         )
+
+        # STRICT: Never include an irrelevant paper just to avoid returning zero results!
         if not results:
-            warnings.append(f"No search results for: {sub_q}")
+            warnings.append(f"No relevant academic papers or web sources met the relevance threshold for: {sub_q}")
             research.append(item)
             continue
 

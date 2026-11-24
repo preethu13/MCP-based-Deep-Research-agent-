@@ -23,7 +23,7 @@ def cli_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         tool_client_mod,
         "_web_search",
-        lambda query, max_results, timeout: [
+        lambda query, max_results=5, timeout=10, **k: [
             {"title": "Redis", "url": "https://ok.example/redis", "snippet": "Redis is in-memory."}
         ],
     )

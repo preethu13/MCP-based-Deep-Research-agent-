@@ -55,7 +55,7 @@ class FakeLLM:
         self.sub_questions = sub_questions or ["What is Redis?", "What is Memcached?"]
         self.calls: list[str] = []
 
-    def complete(self, system: str, user: str, temperature: float | None = None) -> str:
+    def complete(self, system: str, user: str, *args: Any, **kwargs: Any) -> str:
         s = system.lower()
         self.calls.append(s[:40])
         if "convert research notes" in s or "structured comparison" in s:
@@ -72,8 +72,8 @@ class FakeLLM:
             return "A grounded claim synthesised strictly from the provided sources."
         return json.dumps(self.sub_questions)
 
-    def complete_json(self, system: str, user: str, temperature: float | None = None) -> Any:
-        return loads_lenient(self.complete(system, user, temperature))
+    def complete_json(self, system: str, user: str, *args: Any, **kwargs: Any) -> Any:
+        return loads_lenient(self.complete(system, user, *args, **kwargs))
 
     def ping(self) -> tuple[bool, str]:
         return True, "fake llm"

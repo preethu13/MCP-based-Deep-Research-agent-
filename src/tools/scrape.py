@@ -82,7 +82,7 @@ def scrape_page(
     timeout: int = 8,
     user_agent: str = "DeepResearchAgent/1.0",
     respect_robots: bool = True,
-    enable_playwright: bool = False,
+    enable_playwright: bool = True,
 ) -> dict[str, Any]:
     """Fetch and extract clean text content from a web page.
 

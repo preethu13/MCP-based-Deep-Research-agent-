@@ -51,15 +51,21 @@ def _render_references(ordered: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _collect_papers(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract distinct paper objects from findings."""
+def _collect_papers(findings: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:
+    """Extract distinct verified paper objects from findings."""
+    from src.tools.search import RELEVANCE_THRESHOLD, is_candidate_relevant, score_paper_relevance
+
     seen_urls = set()
     papers: list[dict[str, Any]] = []
     for f in findings:
+        sub_q = f.get("sub_question") or ""
         for p in f.get("papers", []) or []:
             url = p.get("url", "")
             title = p.get("title", "")
             if (url or title) and url not in seen_urls:
+                # Final check: only include verified papers matching query relevance
+                if query and not is_candidate_relevant(p, query, sub_q):
+                    continue
                 if url:
                     seen_urls.add(url)
                 papers.append(p)
@@ -69,7 +75,12 @@ def _collect_papers(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _render_papers_section(papers: list[dict[str, Any]]) -> list[str]:
     """Format academic papers with direct links, authors, year, and detailed summaries."""
     if not papers:
-        return []
+        return [
+            "## Research Papers & Literature",
+            "",
+            "_No peer-reviewed papers met the relevance threshold for this query._",
+            "",
+        ]
 
     lines = [
         "## Research Papers & Literature",
@@ -134,7 +145,7 @@ def _render_brief(findings, query, generated_on, ordered, index) -> str:
         lines.append(f"- {claim}{suffix}")
     lines.append("")
 
-    papers = _collect_papers(findings)
+    papers = _collect_papers(findings, query)
     if papers:
         lines += _render_papers_section(papers)
 
@@ -155,7 +166,7 @@ def _render_report(findings, query, generated_on, ordered, index) -> str:
         "",
     ]
 
-    papers = _collect_papers(findings)
+    papers = _collect_papers(findings, query)
     if papers:
         lines += _render_papers_section(papers)
 
@@ -208,7 +219,7 @@ def _render_comparison(findings, query, generated_on, ordered, index) -> str:
             lines.append(f"| {sub_q} | {claim} | {_markers(finding, index) or '—'} |")
 
     lines.append("")
-    papers = _collect_papers(findings)
+    papers = _collect_papers(findings, query)
     if papers:
         lines += _render_papers_section(papers)
 

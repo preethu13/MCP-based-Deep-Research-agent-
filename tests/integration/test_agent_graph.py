@@ -69,8 +69,8 @@ def _build_agent(settings, llm):
     return ResearchAgent(deps), tools, vector, sqlite
 
 
-def test_recall_before_search_short_circuits(settings, monkeypatch):
-    """If memory already answers a sub-question, the web is never queried (AG-03)."""
+def test_recall_before_search_supplements_not_replaces(settings, monkeypatch):
+    """Fresh search is conducted as primary evidence; memory supplements rather than short-circuiting."""
     llm = FakeLLM(sub_questions=["What is Redis?"])
     agent, tools, vector, sqlite = _build_agent(settings, llm)
 
@@ -85,10 +85,15 @@ def test_recall_before_search_short_circuits(settings, monkeypatch):
         )
 
     searched = {"n": 0}
-    monkeypatch.setattr(tools, "web_search", lambda *a, **k: searched.__setitem__("n", searched["n"] + 1) or [])
+    monkeypatch.setattr(
+        tools,
+        "web_search",
+        lambda *a, **k: searched.__setitem__("n", searched["n"] + 1)
+        or [{"title": "Redis Guide", "url": "https://ok.example", "snippet": "Redis in-memory store."}],
+    )
 
     state = agent.run("What is Redis?", "brief", "apa")
-    assert searched["n"] == 0          # short-circuited on memory
+    assert searched["n"] >= 1          # fresh search executed as primary evidence
     assert any("memory" in e["title"].lower() for e in state["trace"])
 
 
@@ -102,7 +107,7 @@ def test_partial_source_failure_degrades_to_snippet(settings, monkeypatch):
         "web_search",
         lambda *a, **k: [
             {"title": "Good", "url": "https://ok.example", "snippet": "Redis snippet text."},
-            {"title": "Bad", "url": "https://bad.example", "snippet": "fallback snippet."},
+            {"title": "Bad", "url": "https://bad.example", "snippet": "fallback Redis snippet."},
         ],
     )
 
