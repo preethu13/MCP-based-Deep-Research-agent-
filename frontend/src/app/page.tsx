@@ -30,7 +30,7 @@ export default function HomePage() {
         {/* Micro Pill Badge */}
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-high/80 border border-surface-container-highest text-primary font-label-mono-sm text-[11px] mb-6 shadow-sm">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>Local · Private · $0 per query</span>
+          <span>Fast · Clean · and Ofcourse free</span>
         </div>
 
         {/* Editorial Headline */}
@@ -75,10 +75,10 @@ export default function HomePage() {
       <section className="w-full max-w-7xl mx-auto px-margin-mobile lg:px-margin pb-24">
         <div className="flex flex-col items-center text-center mb-space-xl">
           <h2 className="font-headline-lg text-headline-lg text-on-surface tracking-tight">
-            Designed to Be Private and Rigorous
+            Designed to Be Fast and Furious.
           </h2>
           <p className="font-body-md text-body-md text-on-surface-variant max-w-xl mt-space-xs">
-            A research analyst that runs directly on your hardware without subscription costs.
+            A research analyst that makes your research  smater , faster and reliable.
           </p>
         </div>
 
@@ -89,10 +89,10 @@ export default function HomePage() {
                 <ShieldCheck className="w-6 h-6" />
               </div>
               <h3 className="font-headline-sm text-headline-sm text-on-surface mb-space-sm">
-                100% Local & Private
+                Verified & Unified
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                Operates with local Ollama models or BYO cloud API. Your research questions and data stay entirely under your control.
+                Verified research claims with proper citations and an unified platform for multiple papers.
               </p>
             </div>
           </div>
@@ -103,10 +103,10 @@ export default function HomePage() {
                 <Link2 className="w-6 h-6" />
               </div>
               <h3 className="font-headline-sm text-headline-sm text-on-surface mb-space-sm">
-                Dual-Tier Search MCP
+                100% free
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                Connects OpenAlex academic papers and DuckDuckGo web search with relevance guardrails and false-friend filters.
+                No sbscription cost ,free for students , researchers and every research paglus.
               </p>
             </div>
           </div>
@@ -117,10 +117,10 @@ export default function HomePage() {
                 <BrainCircuit className="w-6 h-6" />
               </div>
               <h3 className="font-headline-sm text-headline-sm text-on-surface mb-space-sm">
-                Semantic Recall Memory
+                Fast and Simple
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                Stores verified claims and paper findings in ChromaDB and SQLite, compounding knowledge across research inquiries.
+                Get research findings at a faster rate with clean formatted response.
               </p>
             </div>
           </div>
