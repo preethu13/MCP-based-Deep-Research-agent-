@@ -37,20 +37,20 @@ User (CLI / Streamlit UI)
                  v
 +-------------------------------------+
 |           FastMCP Server            |
-|  web_search  scrape_page            |
-|  generate_citation  format_output   |
-|  store_memory  recall_memory        |
+|  web_search  search_academic_papers |
+|  scrape_page generate_citation      |
+|  format_output store_memory recall  |
 +----------+---------------------------+
            |                     |
     +------+              +------+
     v                     v
 DuckDuckGo +          SQLite + ChromaDB
-BeautifulSoup +      (persistent memory)
-Playwright            + Ollama embeddings
+OpenAlex +            (persistent memory &
+BeautifulSoup         instant query cache)
            |
            v
-    Ollama (llama3.1:8b)
-    -- runs locally, no API key
+    Primary: OpenRouter / OpenAI API (gpt-4o-mini, text-embedding-3-small)
+    Optional: Local Ollama (llama3.1:8b, nomic-embed-text)
 ```
 
 ---
@@ -60,23 +60,30 @@ Playwright            + Ollama embeddings
 | Dependency | Notes |
 |---|---|
 | Python 3.10+ | 3.11 recommended |
-| [Ollama](https://ollama.com) | Local LLM runtime |
-| ~5 GB free disk | For model weights |
-| ~16 GB RAM | 8 GB minimum with a smaller model |
+| **OpenRouter / OpenAI API Key** | **Primary inference provider** (fast, cloud-hosted) |
+| [Ollama](https://ollama.com) (Optional) | Optional local offline LLM alternative |
 
+### 1. Primary Setup: OpenRouter / OpenAI API (Recommended)
+Set your API key and base URL in `.env`:
 ```bash
-# Install Ollama (macOS / Linux)
-curl -fsSL https://ollama.com/install.sh | sh
+OPENAI_API_KEY="sk-or-v1-..."
+OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+OPENAI_MODEL="openai/gpt-4o-mini"
+OPENAI_EMBED_MODEL="text-embedding-3-small"
+LLM_PROVIDER="openai"
+```
 
-# Windows: download the installer from https://ollama.com/download
-
+### 2. Optional Setup: Local Ollama (Offline / $0)
+If you prefer running fully local without API keys:
+```bash
 # Pull the required models
 ollama pull llama3.1:8b          # chat / reasoning (~4.7 GB)
 ollama pull nomic-embed-text     # embeddings (~270 MB)
 
-# Low-RAM alternative (< 8 GB):
-# ollama pull phi3:mini
-# Then set OLLAMA_CHAT_MODEL=phi3:mini in your .env
+# Set in .env:
+LLM_PROVIDER="ollama"
+OLLAMA_CHAT_MODEL="llama3.1:8b"
+OLLAMA_EMBED_MODEL="nomic-embed-text"
 ```
 
 ---
@@ -166,18 +173,23 @@ All settings live in `.env` (copy from `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_CHAT_MODEL` | `llama3.1:8b` | Chat/reasoning model |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
+| `LLM_PROVIDER` | `openai` | Inference backend: `openai` (primary / OpenRouter) or `ollama` (optional local) |
+| `OPENAI_API_KEY` | `""` | OpenRouter, OpenAI, Groq, or DeepSeek API key |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Chat model identifier (e.g. `openai/gpt-4o-mini`) |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Endpoint base (use `https://openrouter.ai/api/v1` for OpenRouter) |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | Cloud embedding model |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (optional local fallback) |
+| `OLLAMA_CHAT_MODEL` | `llama3.1:8b` | Local chat/reasoning model |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Local embedding model |
 | `LLM_TEMPERATURE` | `0.2` | Lower = more factual |
+| `ENABLE_CACHE` | `true` | Multi-tier SQLite & in-memory caching |
 | `RESEARCH_DB_PATH` | `data/research.db` | SQLite database |
 | `CHROMA_DIR` | `data/chroma` | ChromaDB vector store |
-| `MAX_RESULTS_PER_QUERY` | `5` | DuckDuckGo results per sub-question |
+| `MAX_RESULTS_PER_QUERY` | `5` | Results per sub-question |
 | `SOURCES_TO_SCRAPE` | `3` | Pages to read per sub-question |
 | `MEMORY_RELEVANCE_THRESHOLD` | `0.75` | Cosine similarity cutoff for recall |
-| `RECALL_SHORTCIRCUIT_HITS` | `2` | Skip web search if >= N strong memories exist |
-| `SEARCH_TIMEOUT` | `10` | Search network timeout (seconds) |
-| `SCRAPE_TIMEOUT` | `30` | Scraping timeout (seconds) |
+| `SEARCH_TIMEOUT` | `8` | Search network timeout (seconds) |
+| `SCRAPE_TIMEOUT` | `8` | Scraping timeout (seconds) |
 | `RESPECT_ROBOTS_TXT` | `true` | Honour robots.txt |
 
 ---

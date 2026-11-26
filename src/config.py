@@ -67,8 +67,8 @@ class Settings:
     log_file: Path = Path("data/agent.log")
 
     # Research behaviour
-    max_results_per_query: int = 5
-    sources_to_scrape: int = 3
+    max_results_per_query: int = 8
+    sources_to_scrape: int = 5
     memory_relevance_threshold: float = 0.75
     recall_shortcircuit_hits: int = 2
 
@@ -101,8 +101,8 @@ def get_settings() -> Settings:
         db_path=Path(_get_str("RESEARCH_DB_PATH", "data/research.db")),
         chroma_dir=Path(_get_str("CHROMA_DIR", "data/chroma")),
         log_file=Path(_get_str("LOG_FILE", "data/agent.log")),
-        max_results_per_query=_get_int("MAX_RESULTS_PER_QUERY", 5),
-        sources_to_scrape=_get_int("SOURCES_TO_SCRAPE", 3),
+        max_results_per_query=_get_int("MAX_RESULTS_PER_QUERY", 8),
+        sources_to_scrape=_get_int("SOURCES_TO_SCRAPE", 5),
         memory_relevance_threshold=_get_float("MEMORY_RELEVANCE_THRESHOLD", 0.75),
         recall_shortcircuit_hits=_get_int("RECALL_SHORTCIRCUIT_HITS", 2),
         search_timeout=_get_int("SEARCH_TIMEOUT", 8),

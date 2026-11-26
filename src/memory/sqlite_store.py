@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_query      TEXT NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     output_format   TEXT CHECK(output_format IN ('brief','comparison','report')),
-    status          TEXT CHECK(status IN ('running','completed','failed')) DEFAULT 'running'
+    status          TEXT CHECK(status IN ('running','completed','failed')) DEFAULT 'running',
+    final_output    TEXT,
+    findings_json   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS findings (
@@ -73,6 +75,14 @@ class SQLiteStore:
         """Create tables and indexes if they do not exist."""
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            # Migrate existing databases: add columns if missing
+            existing_cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            if "final_output" not in existing_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN final_output TEXT")
+            if "findings_json" not in existing_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN findings_json TEXT")
 
     # -- sessions -------------------------------------------------------
     def create_session(self, session_id: str, user_query: str, output_format: str) -> None:
@@ -86,6 +96,22 @@ class SQLiteStore:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE sessions SET status = ? WHERE session_id = ?", (status, session_id)
+            )
+
+    def save_session_result(
+        self,
+        session_id: str,
+        final_output: str,
+        findings: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist the formatted output and findings JSON so they survive page reloads."""
+        import json as _json
+
+        findings_json = _json.dumps(findings) if findings else None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET final_output = ?, findings_json = ? WHERE session_id = ?",
+                (final_output, findings_json, session_id),
             )
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -204,3 +230,61 @@ class SQLiteStore:
                 "SELECT * FROM memories WHERE chroma_vector_id = ?", (chroma_vector_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    # -- papers (derived from citations) ------------------------------------
+    def get_session_papers(self, session_id: str) -> list[dict[str, Any]]:
+        """Return all citation records associated with a session's findings."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.url, c.title, c.author, c.publisher,
+                       c.formatted_apa, c.formatted_mla,
+                       f.sub_question
+                FROM citations c
+                JOIN findings f ON f.finding_id = c.finding_id
+                WHERE f.session_id = ?
+                ORDER BY c.citation_id
+                """,
+                (session_id,),
+            ).fetchall()
+
+            # Also try to get papers from findings_json for richer data
+            session = conn.execute(
+                "SELECT findings_json FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+
+            papers: list[dict[str, Any]] = []
+            seen_urls: set[str] = set()
+
+            # First: try findings_json (has full paper metadata)
+            if session and session["findings_json"]:
+                import json as _json
+                try:
+                    findings = _json.loads(session["findings_json"])
+                    for f in findings:
+                        for p in f.get("papers", []):
+                            url = p.get("url", "")
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                papers.append({
+                                    "title": p.get("title", ""),
+                                    "author": p.get("author", ""),
+                                    "publisher": p.get("venue", "") or p.get("publisher", ""),
+                                    "url": url,
+                                    "formatted_apa": p.get("summary", "") or p.get("abstract", ""),
+                                    "sub_question": f.get("sub_question"),
+                                })
+                except (ValueError, TypeError):
+                    pass
+
+            # Fallback: relational citation rows
+            if not papers:
+                for row in rows:
+                    r = dict(row)
+                    url = r.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        papers.append(r)
+
+            return papers

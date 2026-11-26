@@ -27,9 +27,9 @@ The **MCP-Powered Deep Research Agent** is an autonomous scientific and web rese
 | **Language** | Python | `>=3.11` | Primary development runtime |
 | **Agent Orchestrator** | `langgraph` | `>=0.2.28` | State machine DAG connecting Planner, Researcher, Synthesizer, Formatter |
 | **Tool Protocol** | `fastmcp` | `>=2.3.0` | Exposes research tools over Model Context Protocol |
-| **Local LLM Engine** | `ollama` | `>=0.3.3` | Local chat (`llama3.1:8b`) and embeddings (`nomic-embed-text`) |
-| **Cloud LLM Client** | `httpx` (Custom `OpenAILLM`) | `>=0.27.0` | Cloud inference via OpenAI, OpenRouter, Groq endpoints |
-| **Relational Database** | `sqlite3` (`data/research.db`) | Standard Library | Stores sessions, findings, citations, and vector ID mappings |
+| **Primary Cloud LLM & Embeddings** | `httpx` (Custom `OpenAILLM`) | `>=0.27.0` | Primary cloud inference via OpenRouter / OpenAI endpoints (`gpt-4o-mini`, `text-embedding-3-small`) |
+| **Optional Local LLM Engine** | `ollama` (Optional) | `>=0.3.3` | Optional local chat (`llama3.1:8b`) and embeddings (`nomic-embed-text`) |
+| **Relational Database & Cache** | `sqlite3` (`data/research.db`) | Standard Library | Stores sessions, findings, citations, vector mappings, and completed research cache |
 | **Vector Database** | `chromadb` (`data/chroma`) | `>=0.5.5` | Persistent vector store with cosine distance for semantic recall |
 | **Academic Retrieval** | OpenAlex REST API | `api.openalex.org` | 250M+ peer-reviewed papers, open-access PDFs, abstracts |
 | **Web Search** | `ddgs` (`duckduckgo-search`) | `>=7.0.0` | Real-time web search without API keys |
@@ -48,10 +48,11 @@ The **MCP-Powered Deep Research Agent** is an autonomous scientific and web rese
 - **Query Sanitization:** `clean_search_query()` strips question noise words (`"What are"`, `"How do"`) while preserving core technical topics.
 - **Relevance Scoring & Anti-Collision:** `score_paper_relevance()` evaluates title/abstract keyword overlap, penalizing off-topic acronym collisions (e.g. `Concept-ROT`) and domain mismatches (e.g. stock investing).
 - **Abstract Fast-Path:** Instant retrieval bypassing HTTP scraping when publisher abstracts are available from OpenAlex.
-- **Batch Synthesis:** Single coordinated LLM pass in `src/agent/nodes/synthesizer.py` generating all findings simultaneously, cutting runtimes from >200s to ~15-25s.
-- **Dual Inference Support:**
-  - Local Ollama (`OllamaLLM`) for private, offline-capable $0 inference.
-  - Cloud API (`OpenAILLM`) for high-speed cloud inference via OpenRouter / OpenAI.
+- **Batch Synthesis:** Single coordinated LLM pass in `src/agent/nodes/synthesizer.py` generating all findings simultaneously, cutting runtimes to ~10-15s.
+- **Instant Research Caching:** Completed research sessions (findings, claims, bibliography) are cached in SQLite for immediate (0.05s) response on repeated or related queries.
+- **Primary OpenRouter Inference & Optional Local Ollama:**
+  - OpenRouter / Cloud API (`OpenAILLM` + `OpenAIEmbeddings`) as the primary inference engine using `gpt-4o-mini` and `text-embedding-3-small`.
+  - Local Ollama (`OllamaLLM` + `OllamaEmbeddings`) as an optional local offline alternative.
 - **Structured Persistent Memory:**
   - Relational SQLite tables for sessions, findings, and citations (`data/research.db`).
   - Vector embeddings in ChromaDB (`data/chroma`) with recall-before-search short-circuiting.

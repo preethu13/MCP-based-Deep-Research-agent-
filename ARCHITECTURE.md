@@ -49,7 +49,8 @@
                                              v
                  +-------------------------------------------------------+
                  |                    Inference Engines                  |
-                 |  Local Ollama (llama3.1)  |  Cloud API (OpenRouter)   |
+                 |  Primary: OpenRouter / OpenAI (gpt-4o-mini, text-3)   |
+                 |  Optional: Local Ollama (llama3.1, nomic-embed)       |
                  +-------------------------------------------------------+
 ```
 

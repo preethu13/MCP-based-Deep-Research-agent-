@@ -36,7 +36,8 @@ _STOPWORDS = {
     "only", "own", "same", "so", "than", "too", "very", "can", "will", "just", "should", "now",
     "potential", "primary", "current", "real-world", "real", "world", "key",
     "causes", "mechanisms", "consequences", "strategies", "methods", "approaches", "mitigate",
-    "mitigation", "contribute", "contributes", "impact", "impacts", "role", "roles"
+    "mitigation", "contribute", "contributes", "impact", "impacts", "role", "roles",
+    "vs", "versus", "difference", "differences", "compare", "comparison", "between"
 }
 
 
@@ -77,16 +78,29 @@ def clean_search_query(sub_q: str, main_query: str = "") -> str:
     sub_info = extract_query_concepts(sub_q)
     main_info = extract_query_concepts(main_query) if main_query else None
 
-    # Check if main_query has a specific multi-word phrase (e.g. "context rot")
-    main_phrase = main_info["phrases"][0] if main_info and main_info["phrases"] else ""
+    # Always anchor the search query with the main query topic/phrase to prevent topic drift
+    anchor = ""
+    if main_info and main_info["words"]:
+        # If main query has 1 to 4 core terms, anchor with ALL of them so comparisons (e.g. "API vs MCP") don't drop half the query
+        if len(main_info["words"]) <= 4:
+            anchor = " ".join(main_info["words"])
+        elif main_info["phrases"]:
+            anchor = f'"{main_info["phrases"][0]}"'
+        else:
+            anchor = " ".join(main_info["words"][:3])
+    elif main_info and main_info["phrases"]:
+        anchor = f'"{main_info["phrases"][0]}"'
 
-    # If main_phrase exists and is NOT in sub_q, anchor sub_q with main_phrase
-    if main_phrase and main_phrase not in sub_q.lower():
-        sub_words = [w for w in sub_info["words"] if w not in _STOPWORDS]
-        aspects = " ".join(sub_words[:2])
-        return f'"{main_phrase}" {aspects}'.strip()
+    if anchor:
+        anchor_words = set(re.findall(r"\w+", anchor.lower()))
+        distinguishing_words = [
+            w for w in sub_info["words"]
+            if w.lower() not in anchor_words and w.lower() not in _STOPWORDS
+        ]
+        aspects = " ".join(distinguishing_words[:2])
+        return f'{anchor} {aspects}'.strip() if aspects else anchor
 
-    # Otherwise, clean sub_q directly:
+    # Fallback if no main_query was provided:
     if sub_info["phrases"]:
         core_phrase = sub_info["phrases"][0]
         other_words = [w for w in sub_info["words"] if w not in core_phrase.split() and w not in _STOPWORDS]

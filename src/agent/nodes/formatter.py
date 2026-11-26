@@ -32,8 +32,9 @@ def formatter_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     )
 
     try:
+        deps.sqlite.save_session_result(state["session_id"], output, findings)
         deps.sqlite.update_session_status(state["session_id"], "completed")
     except Exception:
         pass
 
-    return {"final_output": output, "trace": trace}
+    return {"final_output": output, "findings": findings, "trace": trace}

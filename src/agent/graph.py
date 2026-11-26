@@ -23,7 +23,7 @@ from src.agent.nodes.formatter import formatter_node
 from src.agent.nodes.planner import planner_node
 from src.agent.nodes.researcher import researcher_node
 from src.agent.nodes.synthesizer import synthesizer_node
-from src.agent.state import AgentDeps, ResearchState
+from src.agent.state import AgentDeps, ResearchState, make_event
 from src.agent.tool_client import ToolClient
 from src.config import Settings, get_settings
 

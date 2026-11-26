@@ -14,15 +14,16 @@
 | **Search Query Sanitization** | **Completed** | `src/tools/search.py` | Strips question noise; anchors queries to core topics. |
 | **Relevance Scoring & Filtering** | **Completed** | `src/tools/search.py` | Heuristic scoring drops off-topic false friends and acronym collisions. |
 | **Abstract Fast-Path** | **Completed** | `src/agent/nodes/researcher.py` | Instant abstract extraction without HTML scraping. |
-| **Batch Synthesis** | **Completed** | `src/agent/nodes/synthesizer.py` | Generates all findings in one LLM call (~15-25s total run). |
-| **Dual Inference Engine** | **Completed** | `src/agent/llm.py`, `src/agent/api_llm.py` | Ollama local models + OpenAI/OpenRouter cloud models. |
-| **Relational Session Store** | **Completed** | `src/memory/sqlite_store.py` | SQLite schema with foreign keys and cascading deletes. |
+| **Batch Synthesis** | **Completed** | `src/agent/nodes/synthesizer.py` | Generates all findings in one LLM call (~10-15s total run). |
+| **Inference & Embeddings Engine** | **Completed** | `src/agent/api_llm.py`, `src/agent/llm.py` | Primary OpenRouter/OpenAI API (`gpt-4o-mini`, `text-embedding-3-small`) + optional local Ollama (`llama3.1:8b`, `nomic-embed-text`). |
+| **Multi-Tier & Instant Query Cache** | **Completed** | `src/memory/cache.py`, `src/memory/sqlite_store.py` | In-memory LRU + SQLite cache; instant (0.05s) response for repeated queries. |
+| **Relational Session Store** | **Completed** | `src/memory/sqlite_store.py` | SQLite schema with foreign keys, cascading deletes, and session result caching. |
 | **Vector Memory Recall** | **Completed** | `src/memory/vector_store.py` | ChromaDB vector recall with recall-before-search short-circuit. |
 | **APA 7th & MLA 9th Formatting** | **Completed** | `src/tools/citation.py`, `src/tools/formatter.py` | Deterministic citation generator with structured paper roster. |
 | **Streamlit Web UI** | **Completed** | `src/ui/app.py` | "The Night Desk" dark theme with live SSE-like execution trace. |
 | **Typer CLI Interface** | **Completed** | `src/cli/main.py` | Command-line tool with rich terminal progress trees. |
+| **FastMCP Academic Tool Exposure** | **Completed** | `src/mcp_server.py` | Decorated with `@mcp.tool()` `search_academic_papers` for external MCP parity. |
 | **Playwright JS Scraping** | **Partially Implemented** | `src/tools/scrape.py` | Code exists, but Playwright browser binaries must be manually installed; falls back to static `httpx`. |
-| **FastMCP Academic Tool Exposure** | **Partially Implemented** | `src/mcp_server.py` | In-process agent has `search_academic_papers`, but it is not yet decorated with `@mcp.tool()` on FastMCP server. |
 | **Multi-Hop / Iterative Search** | **Not Implemented** | Planned | Pipeline is single-pass (Plan -> Search -> Synthesize); no evaluation loop to re-query if results are incomplete. |
 | **Full PDF Parsing** | **Not Implemented** | Planned | Only paper abstracts and web pages are parsed; PDF download/text extraction is not implemented. |
 | **Interactive Post-Research Q&A** | **Not Implemented** | Planned (`paln.md`) | User cannot yet ask interactive follow-up questions on retrieved papers. |
@@ -33,11 +34,9 @@
 
 ## 2. Current Technical Limitations & Known Issues
 
-1. **FastMCP Server Feature Parity:**  
-   `src/mcp_server.py` only exposes `web_search`, `scrape_page`, `generate_citation`, `format_output`, `store_memory`, and `recall_memory`. It does not expose `search_academic_papers`, meaning external Claude Desktop clients do not get OpenAlex academic literature.
-2. **Pytest Not in Default `requirements.txt`:**  
+1. **Pytest in `requirements-dev.txt`:**  
    `pytest` is located in `requirements-dev.txt`. Users who run `pip install -r requirements.txt` cannot run the test suite without installing developer dependencies.
-3. **Windows Sandbox Network Restrictions:**  
+2. **Windows Sandbox Network Restrictions:**  
    On Windows environments with secure sandbox policies, outbound socket connections for DuckDuckGo and OpenAlex can be blocked unless bypassed.
 4. **Streamlit Global Secrets Permission:**  
    Streamlit searches for `~/.streamlit/secrets.toml`. If sandbox permissions restrict user home directory access, Streamlit raises `PermissionError` unless granted appropriate filesystem access.

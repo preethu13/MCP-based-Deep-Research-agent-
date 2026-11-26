@@ -90,14 +90,29 @@
 
 ---
 
-## ADR 07: Hybrid Inference Support (Local Ollama + Cloud API via `httpx`)
+## ADR 07: Primary OpenRouter Cloud API Inference with Optional Local Ollama
 
-- **Decision:** Implement a native, dependency-free `OpenAILLM` client (`src/agent/api_llm.py`) supporting any OpenAI-compatible endpoint alongside local Ollama.
-- **Context:** Some users lack powerful local GPUs (e.g. 16GB RAM machines running 8B models slowly) or prefer fast cloud models (OpenRouter, Groq, OpenAI).
+- **Decision:** Use **OpenRouter / Cloud API** (`src/agent/api_llm.py`) with `gpt-4o-mini` and `text-embedding-3-small` as the primary inference & embeddings engine, with local **Ollama** (`llama3.1:8b`, `nomic-embed-text`) as an optional offline alternative.
+- **Context:** Local 8B models can be slow on consumer hardware without dedicated GPUs. OpenRouter provides ultra-fast inference and high-accuracy synthesis without local hardware constraints.
 - **Why Chosen:**
-  - Avoids adding the bloated `openai` official SDK dependency; uses standard `httpx`.
-  - Configurable via `.env` (`OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`).
-  - Seamless fallback between local and cloud providers.
+  - Fast, responsive completions via lightweight `httpx` client without heavy SDK dependencies.
+  - Consistent embeddings using `text-embedding-3-small` via OpenAI / OpenRouter endpoints.
+  - Configurable via `.env` (`OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `OPENAI_EMBED_MODEL`).
+  - Full local privacy preserved whenever users toggle `LLM_PROVIDER=ollama`.
 - **Alternatives Considered:**
-  - *Official OpenAI Python SDK:* Heavy dependency footprint with rapid breaking changes.
-- **Limitations:** User must supply their own API key for cloud providers.
+  - *Ollama-only:* Required 8-16GB RAM and had high per-token latency on CPU-only machines.
+  - *Official OpenAI Python SDK:* Heavy dependency footprint with frequent breaking changes.
+- **Limitations:** Cloud mode requires user-supplied API keys and internet access.
+
+---
+
+## ADR 08: Multi-Tier Caching & Instant Research Recall
+
+- **Decision:** Implement multi-tier caching across search queries, embeddings, scraped pages, and completed research sessions in SQLite (`data/research.db`).
+- **Context:** Repeated or related research queries (e.g. searching "Context Rot") previously re-executed the entire retrieval and LLM synthesis pipeline from scratch, taking 25-35 seconds each time.
+- **Why Chosen:**
+  - In-memory LRU + persistent SQLite cache serves identical or previously completed research queries instantaneously (~0.05 seconds).
+  - Preserves exact verified claims, findings, and APA/MLA citations.
+  - Hash-based embedding cache prevents re-computing vectors for known strings.
+- **Alternatives Considered:**
+  - *Redis:* Required running an external server service; SQLite + in-memory dictionary provides zero-dependency persistence.

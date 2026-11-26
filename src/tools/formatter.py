@@ -141,6 +141,9 @@ def _render_brief(findings, query, generated_on, ordered, index) -> str:
     for finding in findings:
         marker = _markers(finding, index)
         claim = finding.get("claim", "").strip()
+        if not claim:
+            sub_q = finding.get("sub_question", "")
+            claim = f"Insufficient direct evidence in retrieved sources to establish findings for: {sub_q}" if sub_q else "Finding could not be synthesized from available sources."
         suffix = f" {marker}" if marker else ""
         lines.append(f"- {claim}{suffix}")
     lines.append("")

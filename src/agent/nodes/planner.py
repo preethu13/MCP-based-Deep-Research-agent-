@@ -29,10 +29,18 @@ def _heuristic_decompose(query: str) -> list[str]:
         flags=re.IGNORECASE
     ).rstrip("?").strip() or query.strip()
 
+    is_comparison = bool(re.search(r"\b(vs|versus|compare|comparison|difference|between)\b", clean_topic, re.IGNORECASE))
+    if is_comparison:
+        return [
+            f"What are the core definitions, architectures, and mechanisms of {clean_topic}?",
+            f"What are the key technical differences and trade-offs in {clean_topic}?",
+            f"What are the primary use cases, advantages, and limitations of {clean_topic}?",
+        ]
+
     return [
         f"What is the definition and core mechanism of {clean_topic}?",
-        f"What are the causes and empirical effects of {clean_topic}?",
-        f"What are the primary mitigation strategies and architectures for {clean_topic}?",
+        f"What are the key methodologies, architectures, and implementations of {clean_topic}?",
+        f"What are the primary applications, performance benefits, and best practices for {clean_topic}?",
     ]
 
 

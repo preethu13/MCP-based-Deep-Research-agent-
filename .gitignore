@@ -32,3 +32,10 @@ scripts/diagnose.py
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Frontend ---
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+.next/
+node_modules/

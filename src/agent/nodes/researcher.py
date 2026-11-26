@@ -108,7 +108,6 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 passing = [c for s, c in ref_scored if s >= RELEVANCE_THRESHOLD]
                 if passing:
                     results = passing
-                    break
                     trace.append(
                         make_event(
                             len(trace) + 1,

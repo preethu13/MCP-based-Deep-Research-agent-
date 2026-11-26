@@ -81,11 +81,20 @@ def _batch_synthesize_claims(llm: Any, items: list[tuple[str, str]]) -> list[str
     try:
         data = llm.complete_json(system, user, max_tokens=300)
         if isinstance(data, list) and len(data) == len(items):
-            return [_clean_claim_item(x) for x in data]
+            results = [_clean_claim_item(x) for x in data]
+            # Fallback any empty claims to individual synthesis
+            for i, (claim, (sub_q, ctx)) in enumerate(zip(results, items)):
+                if not claim.strip():
+                    results[i] = _synthesize_claim(llm, sub_q, ctx)
+            return results
         if isinstance(data, dict):
             claims = data.get("findings") or data.get("claims") or list(data.values())
             if isinstance(claims, list) and len(claims) == len(items):
-                return [_clean_claim_item(x) for x in claims]
+                results = [_clean_claim_item(x) for x in claims]
+                for i, (claim, (sub_q, ctx)) in enumerate(zip(results, items)):
+                    if not claim.strip():
+                        results[i] = _synthesize_claim(llm, sub_q, ctx)
+                return results
     except Exception:
         pass
 

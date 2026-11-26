@@ -34,10 +34,10 @@ $$\text{START} \longrightarrow \text{planner} \longrightarrow \text{researcher} 
 - **State Container (`ResearchState`):** Defined in `src/agent/state.py` as a `TypedDict`. Nodes receive `state: ResearchState` and return a dictionary of state updates.
 - **Dependency Injection (`AgentDeps`):** Node functions are wrapped using `functools.partial(node_fn, deps=deps)`. Never instantiate database connections or HTTP clients inside node functions; access them via `deps.tools`, `deps.llm`, `deps.sqlite`, or `deps.settings`.
 
-### 2.2 Dual LLM Inference Strategy
-The agent supports two backends configured via `.env` or `Settings`:
-1. **Local Ollama (`src/agent/llm.py`):** Runs local models (`llama3.1:8b`, `nomic-embed-text`) over HTTP via `ollama.Client`.
-2. **Cloud API (`src/agent/api_llm.py`):** Direct `httpx` client for OpenAI-compatible endpoints (OpenAI, OpenRouter, Groq) using standard chat completion and embedding payloads.
+### 2.2 LLM & Inference Strategy
+The agent primarily uses hosted cloud API providers via OpenRouter (or OpenAI-compatible endpoints) with local Ollama as a supported offline option:
+1. **Primary: OpenRouter / Cloud API (`src/agent/api_llm.py`):** Direct `httpx` client connecting to OpenAI-compatible endpoints (OpenRouter, OpenAI, Groq, DeepSeek). Default chat model: `openai/gpt-4o-mini` (or configured via `OPENAI_MODEL`), and default embedding model: `text-embedding-3-small` (or `nomic-embed-text` / deterministic fallback).
+2. **Optional: Local Ollama (`src/agent/llm.py`):** Runs local models (e.g. `llama3.1:8b`, `nomic-embed-text`) over HTTP via `ollama.Client` for fully local, air-gapped workflows.
 
 ### 2.3 Search & Relevance Guardrails
 - **Stopword Dilution:** Never pass raw conversational sub-questions directly to OpenAlex or DuckDuckGo. Always run them through `clean_search_query()` in `src/tools/search.py`.
