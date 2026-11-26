@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.config import Settings, get_settings
-from src.memory.embeddings import EmbeddingProvider, OllamaEmbeddings
+from src.memory.embeddings import CachedEmbeddingProvider, EmbeddingProvider, OllamaEmbeddings
 from src.memory.sqlite_store import SQLiteStore
 from src.memory.vector_store import VectorStore
 from src.tools.citation import generate_citation as _generate_citation
@@ -60,6 +60,10 @@ class ToolClient:
             )
         else:
             emb = OllamaEmbeddings(settings.embed_model, settings.ollama_host)
+
+        if settings.enable_cache and not isinstance(emb, CachedEmbeddingProvider):
+            emb = CachedEmbeddingProvider(emb)
+
         return cls(emb, sqlite, vector, settings)
 
     # -- web -----------------------------------------------------------
@@ -75,7 +79,7 @@ class ToolClient:
             query,
             max_results or self.settings.max_results_per_query,
             self.settings.search_timeout,
-            include_papers=True,
+            include_papers=False,
         )
 
     def scrape_page(self, url: str) -> dict[str, Any]:

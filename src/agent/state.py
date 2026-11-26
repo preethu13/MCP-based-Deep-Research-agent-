@@ -24,6 +24,7 @@ class ResearchState(TypedDict, total=False):
     # observability
     trace: list[dict[str, Any]]      # live "agent thinking" events (UI signature)
     warnings: list[str]
+    metrics: dict[str, Any]          # execution timing and operational profiling metrics
 
     # output
     final_output: str

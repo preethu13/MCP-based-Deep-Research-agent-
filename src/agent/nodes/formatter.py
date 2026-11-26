@@ -12,10 +12,26 @@ def formatter_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     findings = state.get("findings", [])
     query = state.get("query", "Research findings")
     trace = list(state.get("trace", []))
+    warnings = list(state.get("warnings", []))
 
-    output = deps.tools.format_output(findings, fmt, query=query)
+    # Stage 6: Research Quality Validation Stage (QC-01..08)
+    from src.agent.validator import validate_and_reconcile_research
+    val_findings, verified_papers, val_warnings = validate_and_reconcile_research(findings, query)
+    warnings.extend(val_warnings)
 
-    warnings = state.get("warnings", [])
+    trace.append(
+        make_event(
+            len(trace) + 1,
+            "validator",
+            "quality_audit",
+            "Validated research quality",
+            f"{len(verified_papers)} verified paper(s), {len(val_findings)} finding(s) audited",
+            "ok" if verified_papers else "warn",
+        )
+    )
+
+    output = deps.tools.format_output(val_findings, fmt, query=query)
+
     if warnings:
         notes = "\n".join(f"> - {w}" for w in warnings[:8])
         output += f"\n\n---\n\n> **Notes on this run**\n{notes}\n"
@@ -26,7 +42,7 @@ def formatter_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             "formatter",
             "format_output",
             f"Rendered {fmt}",
-            f"{len(findings)} finding(s)",
+            f"{len(val_findings)} finding(s)",
             "ok",
         )
     )
@@ -36,4 +52,4 @@ def formatter_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     except Exception:
         pass
 
-    return {"final_output": output, "trace": trace}
+    return {"final_output": output, "findings": val_findings, "warnings": warnings, "trace": trace}

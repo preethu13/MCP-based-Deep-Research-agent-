@@ -72,11 +72,20 @@ class OpenAILLM:
             payload["max_tokens"] = max_tokens
 
         url = f"{self.base_url}/chat/completions"
+        from src.agent.profiler import get_profiler
+        prof = get_profiler()
+
         try:
-            resp = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
-            resp.raise_for_status()
-            data = resp.json()
-            return str(data["choices"][0]["message"]["content"]).strip()
+            with prof.measure_operation("llm_inference"):
+                resp = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
+                resp.raise_for_status()
+                data = resp.json()
+                usage = data.get("usage") or {}
+                prof.record_tokens(
+                    prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                    completion_tokens=int(usage.get("completion_tokens", 0)),
+                )
+                return str(data["choices"][0]["message"]["content"]).strip()
         except httpx.HTTPStatusError as exc:
             err_msg = f"API error ({exc.response.status_code}): {exc.response.text[:200]}"
             logger.error(err_msg)

@@ -276,6 +276,18 @@ def serve() -> None:
 
 
 @app.command()
+def api(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Bind host."),
+    port: int = typer.Option(8000, "--port", "-p", help="Bind port."),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Auto reload on code change."),
+) -> None:
+    """Launch the FastAPI REST & SSE server for Next.js frontend."""
+    import uvicorn
+
+    uvicorn.run("src.api:app", host=host, port=port, reload=reload)
+
+
+@app.command()
 def ui() -> None:
     """Launch the Streamlit web UI."""
     app_path = Path(__file__).resolve().parents[1] / "ui" / "app.py"

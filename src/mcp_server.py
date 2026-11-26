@@ -35,6 +35,7 @@ from src.tools.formatter import format_output as _format_output
 from src.tools.memory import recall_memory as _recall_memory
 from src.tools.memory import store_memory as _store_memory
 from src.tools.scrape import scrape_page as _scrape_page
+from src.tools.search import search_academic_papers as _search_academic_papers
 from src.tools.search import web_search as _web_search
 
 settings = get_settings()
@@ -70,6 +71,28 @@ def _run(tool: str, seconds: int, fn: Callable, on_error: Callable[[str], Any], 
 # ─────────────────────────────────────────────────────────────
 # Tools
 # ─────────────────────────────────────────────────────────────
+@mcp.tool()
+def search_academic_papers(query: str, max_results: int = 5) -> list[dict]:
+    """Search for academic research papers and preprints via OpenAlex.
+
+    Args:
+        query: The academic search topic or question.
+        max_results: Maximum number of papers to return (default 5).
+
+    Returns:
+        List of paper metadata dicts (title, authors, year, venue, url, abstract).
+    """
+    return _run(
+        "search_academic_papers",
+        settings.search_timeout,
+        _search_academic_papers,
+        on_error=lambda _msg: [],
+        query=query,
+        max_results=max_results,
+        timeout=settings.search_timeout,
+    )
+
+
 @mcp.tool()
 def web_search(query: str, max_results: int = 5) -> list[dict]:
     """Search the web via DuckDuckGo (no API key required).

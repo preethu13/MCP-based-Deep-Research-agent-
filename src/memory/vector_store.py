@@ -65,12 +65,14 @@ class VectorStore:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         collection = self._get_collection()
-        collection.add(
-            ids=[vector_id],
-            documents=[text],
-            embeddings=[embedding],
-            metadatas=[_sanitize_metadata(metadata)],
-        )
+        add_fn = getattr(collection, "upsert", getattr(collection, "add", None))
+        if callable(add_fn):
+            add_fn(
+                ids=[vector_id],
+                documents=[text],
+                embeddings=[embedding],
+                metadatas=[_sanitize_metadata(metadata)],
+            )
 
     def query(
         self,

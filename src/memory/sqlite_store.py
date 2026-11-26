@@ -7,6 +7,7 @@ database means memory survives process restarts (MEM-05 / AC-04).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_query      TEXT NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     output_format   TEXT CHECK(output_format IN ('brief','comparison','report')),
-    status          TEXT CHECK(status IN ('running','completed','failed')) DEFAULT 'running'
+    status          TEXT CHECK(status IN ('running','completed','failed')) DEFAULT 'running',
+    final_output    TEXT,
+    findings_json   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS findings (
@@ -64,15 +67,29 @@ class SQLiteStore:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn = sqlite3.connect(self.db_path, timeout=15.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
+        except Exception:
+            pass
         return conn
 
     def initialize(self) -> None:
         """Create tables and indexes if they do not exist."""
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            # Safe non-breaking schema migrations for existing database files
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN final_output TEXT;")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN findings_json TEXT;")
+            except Exception:
+                pass
 
     # -- sessions -------------------------------------------------------
     def create_session(self, session_id: str, user_query: str, output_format: str) -> None:
@@ -87,6 +104,50 @@ class SQLiteStore:
             conn.execute(
                 "UPDATE sessions SET status = ? WHERE session_id = ?", (status, session_id)
             )
+
+    def save_session_result(
+        self, session_id: str, final_output: str, findings: list[dict[str, Any]]
+    ) -> None:
+        """Persist final report text and findings JSON for fast query reuse."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET status = 'completed', final_output = ?, findings_json = ?
+                WHERE session_id = ?
+                """,
+                (final_output, json.dumps(findings), session_id),
+            )
+
+    def find_completed_session(
+        self, query: str, output_format: str = "report"
+    ) -> dict[str, Any] | None:
+        """Find the latest completed session matching the query."""
+        clean_q = " ".join(query.strip().lower().split())
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, user_query, output_format, final_output, findings_json, created_at
+                FROM sessions
+                WHERE status = 'completed' AND final_output IS NOT NULL AND output_format = ?
+                ORDER BY created_at DESC
+                """,
+                (output_format,),
+            ).fetchall()
+
+            for r in rows:
+                past_q = " ".join(str(r["user_query"]).strip().lower().split())
+                if past_q == clean_q or (clean_q in past_q or past_q in clean_q):
+                    findings = json.loads(r["findings_json"]) if r["findings_json"] else []
+                    return {
+                        "session_id": r["session_id"],
+                        "query": r["user_query"],
+                        "output_format": r["output_format"],
+                        "final_output": r["final_output"],
+                        "findings": findings,
+                        "created_at": r["created_at"],
+                    }
+        return None
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as conn:

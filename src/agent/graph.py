@@ -23,7 +23,8 @@ from src.agent.nodes.formatter import formatter_node
 from src.agent.nodes.planner import planner_node
 from src.agent.nodes.researcher import researcher_node
 from src.agent.nodes.synthesizer import synthesizer_node
-from src.agent.state import AgentDeps, ResearchState
+from src.agent.profiler import Profiler, get_profiler
+from src.agent.state import AgentDeps, ResearchState, make_event
 from src.agent.tool_client import ToolClient
 from src.config import Settings, get_settings
 
@@ -34,10 +35,31 @@ _VALID_STYLES = {"apa", "mla"}
 def build_graph(deps: AgentDeps) -> Any:
     """Compile the research state machine with dependencies bound to each node."""
     graph = StateGraph(ResearchState)
-    graph.add_node("planner", partial(planner_node, deps=deps))
-    graph.add_node("researcher", partial(researcher_node, deps=deps))
-    graph.add_node("synthesizer", partial(synthesizer_node, deps=deps))
-    graph.add_node("formatter", partial(formatter_node, deps=deps))
+
+    def _run_planner(state: ResearchState) -> dict[str, Any]:
+        with get_profiler().measure_node("planner"):
+            return planner_node(state, deps=deps)
+
+    def _run_researcher(state: ResearchState) -> dict[str, Any]:
+        with get_profiler().measure_node("researcher"):
+            return researcher_node(state, deps=deps)
+
+    def _run_synthesizer(state: ResearchState) -> dict[str, Any]:
+        with get_profiler().measure_node("synthesizer"):
+            return synthesizer_node(state, deps=deps)
+
+    def _run_formatter(state: ResearchState) -> dict[str, Any]:
+        prof = get_profiler()
+        with prof.measure_node("formatter"):
+            out = formatter_node(state, deps=deps)
+        out["metrics"] = prof.get_metrics()
+        prof.log_summary()
+        return out
+
+    graph.add_node("planner", _run_planner)
+    graph.add_node("researcher", _run_researcher)
+    graph.add_node("synthesizer", _run_synthesizer)
+    graph.add_node("formatter", _run_formatter)
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "researcher")
@@ -106,11 +128,57 @@ class ResearchAgent:
         output_format: str = "brief",
         citation_style: str = "apa",
         session_id: str | None = None,
+        force_refresh: bool = False,
     ) -> ResearchState:
+        Profiler.reset()
+        output_format = output_format if output_format in _VALID_FORMATS else "brief"
+        citation_style = citation_style if citation_style in _VALID_STYLES else "apa"
+
+        # 1. Instant Return for Previously Researched Queries (Database Cache)
+        if not force_refresh:
+            cached_session = self.deps.sqlite.find_completed_session(query, output_format)
+            if cached_session and cached_session.get("final_output"):
+                findings = cached_session.get("findings", [])
+                sub_qs = [f.get("sub_question") for f in findings if f.get("sub_question")]
+                trace = [
+                    make_event(
+                        1,
+                        "researcher",
+                        "database_cache_hit",
+                        "Retrieved existing completed research from database",
+                        f"Reused findings, claims and bibliography from session {cached_session['session_id']}",
+                        "ok",
+                    )
+                ]
+                return {
+                    "query": query,
+                    "output_format": output_format,
+                    "citation_style": citation_style,
+                    "session_id": cached_session["session_id"],
+                    "sub_questions": sub_qs,
+                    "research": [],
+                    "findings": findings,
+                    "final_output": cached_session["final_output"],
+                    "trace": trace,
+                    "warnings": [f"Served from database cache (session {cached_session['session_id']})."],
+                    "metrics": {
+                        "total_duration_seconds": 0.05,
+                        "cached": True,
+                        "database_cache_hit": True,
+                        "reused_session": cached_session["session_id"],
+                    },
+                }
+
         session_id = session_id or new_session_id()
         state = self._initial_state(query, output_format, citation_style, session_id)
         try:
-            return self.graph.invoke(state)  # type: ignore[return-value]
+            final_state = self.graph.invoke(state)  # type: ignore[return-value]
+            # Save final output & structured findings to SQLite session for fast repeated lookups
+            if final_state.get("final_output"):
+                self.deps.sqlite.save_session_result(
+                    session_id, final_state["final_output"], final_state.get("findings", [])
+                )
+            return final_state
         except Exception:
             try:
                 self.deps.sqlite.update_session_status(session_id, "failed")
@@ -124,9 +192,59 @@ class ResearchAgent:
         output_format: str = "brief",
         citation_style: str = "apa",
         session_id: str | None = None,
+        force_refresh: bool = False,
     ) -> Iterator[ResearchState]:
         """Yield the accumulating state after each node (drives the live UI trace)."""
+        output_format = output_format if output_format in _VALID_FORMATS else "brief"
+        citation_style = citation_style if citation_style in _VALID_STYLES else "apa"
+
+        # Check completed cache for streaming too
+        if not force_refresh:
+            cached_session = self.deps.sqlite.find_completed_session(query, output_format)
+            if cached_session and cached_session.get("final_output"):
+                findings = cached_session.get("findings", [])
+                sub_qs = [f.get("sub_question") for f in findings if f.get("sub_question")]
+                trace = [
+                    make_event(
+                        1,
+                        "researcher",
+                        "database_cache_hit",
+                        "Retrieved existing completed research from database",
+                        f"Reused findings, claims and bibliography from session {cached_session['session_id']}",
+                        "ok",
+                    )
+                ]
+                yield {
+                    "query": query,
+                    "output_format": output_format,
+                    "citation_style": citation_style,
+                    "session_id": cached_session["session_id"],
+                    "sub_questions": sub_qs,
+                    "research": [],
+                    "findings": findings,
+                    "final_output": cached_session["final_output"],
+                    "trace": trace,
+                    "warnings": [f"Served from database cache (session {cached_session['session_id']})."],
+                    "metrics": {
+                        "total_duration_seconds": 0.05,
+                        "cached": True,
+                        "database_cache_hit": True,
+                        "reused_session": cached_session["session_id"],
+                    },
+                }
+                return
+
         session_id = session_id or new_session_id()
         state = self._initial_state(query, output_format, citation_style, session_id)
+        last_state = state
         for update in self.graph.stream(state, stream_mode="values"):
+            last_state = update
             yield update  # type: ignore[misc]
+
+        if last_state.get("final_output"):
+            try:
+                self.deps.sqlite.save_session_result(
+                    session_id, last_state["final_output"], last_state.get("findings", [])
+                )
+            except Exception:
+                pass

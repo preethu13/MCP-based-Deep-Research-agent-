@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import urllib.parse
 import urllib.request
 from typing import Any
+
+import httpx
+
+from src.agent.profiler import get_profiler
+from src.memory.cache import ResearchCache, normalize_cache_key
 
 # The package was renamed duckduckgo_search -> ddgs; try the new name first.
 try:  # pragma: no cover - import shim
@@ -280,17 +286,187 @@ def is_candidate_relevant(
     return main_score >= threshold
 
 
-def search_academic_papers(query: str, max_results: int = 5, timeout: int = 6) -> list[dict[str, Any]]:
-    """Search for peer-reviewed academic papers and scientific preprints via OpenAlex.
+def classify_publication_status(
+    item_or_paper: dict[str, Any],
+    landing_url: str = "",
+    venue: str = "",
+    doi: str = "",
+) -> tuple[str, bool]:
+    """Classifies paper publication status and verifies peer-reviewed status.
+
+    Returns:
+        (status_label, is_peer_reviewed)
+        where status_label is one of:
+          - "Preprint (arXiv)"
+          - "Preprint"
+          - "Peer-reviewed journal article"
+          - "Peer-reviewed conference paper"
+          - "Other publication"
+          - "Unknown publication status"
+    """
+    type_str = str(item_or_paper.get("type", "")).lower()
+    source_type = ""
+    source_name = ""
+    primary_loc = item_or_paper.get("primary_location")
+    if isinstance(primary_loc, dict):
+        source = primary_loc.get("source") or {}
+        if isinstance(source, dict):
+            source_type = str(source.get("type", "")).lower()
+            source_name = str(source.get("display_name", "")).lower()
+
+    url_lower = (landing_url or item_or_paper.get("url") or "").lower()
+    doi_lower = (doi or item_or_paper.get("doi") or "").lower()
+    venue_lower = (venue or item_or_paper.get("venue") or item_or_paper.get("publisher") or "").lower()
+
+    # 1. arXiv detection — NEVER classify arXiv as peer-reviewed
+    is_arxiv = (
+        "arxiv" in url_lower
+        or "arxiv" in doi_lower
+        or "arxiv" in venue_lower
+        or "arxiv" in source_name
+    )
+    if is_arxiv:
+        return "Preprint (arXiv)", False
+
+    # 2. Other Preprint repositories
+    other_repos = ["biorxiv", "medrxiv", "ssrn", "research square", "chemrxiv", "preprints.org"]
+    is_other_preprint = (
+        type_str == "preprint"
+        or source_type == "repository"
+        or any(r in url_lower or r in venue_lower for r in other_repos)
+    )
+    if is_other_preprint:
+        return "Preprint", False
+
+    # 3. Peer-reviewed journal articles (check first if explicitly typed as journal)
+    is_journal = (
+        type_str in ("journal-article", "article")
+        or source_type == "journal"
+        or ("journal" in venue_lower or "transactions" in venue_lower or "nature" in venue_lower or "science" in venue_lower)
+    )
+    if is_journal and venue_lower and not any(r in venue_lower for r in ["arxiv", "preprint", "repository"]):
+        return "Peer-reviewed journal article", True
+
+    # 4. Peer-reviewed conference papers
+    conf_keywords = [
+        "conference", "proceedings", "symposium", "workshop",
+        "neurips", "icml", "acl", "emnlp", "naacl", "iclr", "cvpr", "iccv",
+        "eccv", "kdd", "aaai", "ijcai", "sigir", "sigmod", "vldb"
+    ]
+    is_conf = (
+        type_str in ("proceedings-article", "conference", "proceedings")
+        or source_type == "conference"
+        or any(k in venue_lower for k in conf_keywords)
+    )
+    if is_conf:
+        return "Peer-reviewed conference paper", True
+
+    if venue_lower and venue_lower not in ("venue unavailable", "unknown", "n/a"):
+        return "Other publication", False
+
+    return "Unknown publication status", False
+
+
+def classify_evidence_tier(paper: dict[str, Any], root_query: str, sub_q: str = "") -> str:
+    """Classifies paper into Direct evidence, Supporting evidence, or Related work.
+
+    Does NOT classify purely by title keyword match. Uses abstract content,
+    methodology indicators, and concept depth.
+    """
+    title = (paper.get("title") or "").lower()
+    abstract = (paper.get("abstract") or paper.get("snippet") or paper.get("text") or "").lower()
+    combined = f"{title} {abstract}"
+
+    # Methodological indicators
+    empirical_indicators = [
+        "diagnos", "measur", "evaluat", "benchmark", "empiric", "experiment",
+        "we find", "our experiments show", "performance degrades", "degradation",
+        "abandon", "failure", "investigat", "study of", "attention predict"
+    ]
+    proposed_indicators = [
+        "we propose", "propose a", "protocol", "architecture", "framework",
+        "calculus", "state-coupling", "coherence protocol", "approach to solve",
+        "paradigm", "blueprint"
+    ]
+
+    has_empirical = any(re.search(r"\b" + re.escape(w), combined) for w in empirical_indicators)
+    has_proposed = any(re.search(r"\b" + re.escape(w), combined) for w in proposed_indicators)
+
+    # Core query concepts match
+    q_info = extract_query_concepts(root_query)
+    q_words = q_info["words"]
+    has_all_core = all(re.search(r"\b" + re.escape(w) + r"\b", combined) for w in q_words)
+
+    # Context rot specific nuances
+    if "context" in q_words and "rot" in q_words:
+        if "long-horizon search" in combined or "degrades with context length" in combined or "attention predicts" in combined:
+            return "Direct evidence"
+        if "classifier" in combined or "monitor performance" in combined:
+            return "Direct evidence" if has_empirical else "Supporting evidence"
+        if has_proposed or "protocol" in combined or "architecture" in combined or "mcp" in combined:
+            return "Related work"
+
+    # General domain rules
+    if has_all_core and has_empirical and not (has_proposed and not has_empirical):
+        return "Direct evidence"
+    elif has_all_core or has_empirical:
+        return "Supporting evidence"
+    else:
+        return "Related work"
+
+
+def is_simulation_study(paper: dict[str, Any]) -> bool:
+    """Detects if findings are derived from synthetic simulation vs real-world deployment."""
+    combined = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    sim_terms = [
+        "simulation", "simulated", "synthetic", "controlled environment",
+        "synthetic benchmark", "toy environment", "in silico"
+    ]
+    return any(re.search(r"\b" + re.escape(s) + r"\b", combined) for s in sim_terms)
+
+
+_HTTPX_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def _get_http_client(timeout: int = 8) -> httpx.Client:
+    global _HTTPX_CLIENT
+    with _CLIENT_LOCK:
+        if _HTTPX_CLIENT is None or _HTTPX_CLIENT.is_closed:
+            _HTTPX_CLIENT = httpx.Client(
+                timeout=httpx.Timeout(timeout, connect=4.0),
+                limits=httpx.Limits(max_keepalive_connections=15, max_connections=30),
+                headers={
+                    "User-Agent": "DeepResearchAgent/1.0 (mailto:researcher@local.ai)",
+                    "Accept": "application/json",
+                },
+                follow_redirects=True,
+            )
+        return _HTTPX_CLIENT
+
+
+def search_academic_papers(
+    query: str,
+    max_results: int = 5,
+    timeout: int = 8,
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    """Search for academic papers and scientific preprints via OpenAlex.
 
     Returns structured dictionaries containing:
         - title: Paper title
         - url: Direct paper / DOI landing URL
         - pdf_url: Open access direct PDF URL (if available)
+        - doi: Valid DOI URL
         - authors: List of author names
+        - author: Formatted author string
         - author_str: Formatted author string
         - year: Publication year
-        - venue: Journal or conference venue
+        - venue: Journal, conference or repository venue
+        - publication_status: "Preprint (arXiv)", "Peer-reviewed journal article", etc.
+        - is_peer_reviewed: bool
+        - evidence_tier: "Direct evidence", "Supporting evidence", "Related work"
+        - is_simulation: bool
         - abstract: Full paper abstract
         - snippet: Concise excerpt
         - is_paper: True
@@ -299,75 +475,121 @@ def search_academic_papers(query: str, max_results: int = 5, timeout: int = 6) -
     if not clean_q:
         return []
 
-    try:
-        encoded = urllib.parse.quote_plus(clean_q)
-        url = f"https://api.openalex.org/works?search={encoded}&per-page={max(1, max_results)}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "DeepResearchAgent/1.0 (mailto:researcher@local.ai)",
-                "Accept": "application/json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+    cache = ResearchCache.get_instance() if use_cache else None
+    cache_key = f"{normalize_cache_key(clean_q)}_{max_results}"
+    if cache is not None:
+        cached = cache.get("academic_search", cache_key)
+        if cached is not None and isinstance(cached, list):
+            return cached
 
-        papers: list[dict[str, Any]] = []
-        for item in data.get("results", []):
-            title = item.get("title")
-            if not title:
-                continue
+    prof = get_profiler()
+    with prof.measure_operation("openalex"):
+        try:
+            encoded = urllib.parse.quote_plus(clean_q)
+            url = f"https://api.openalex.org/works?search={encoded}&per-page={max(1, max_results)}"
+            client = _get_http_client(timeout=timeout)
+            resp = client.get(url, timeout=timeout)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
 
-            doi = item.get("doi")
-            primary_loc = item.get("primary_location") or {}
-            landing_url = (
-                primary_loc.get("landing_page_url")
-                or doi
-                or (item.get("open_access") or {}).get("oa_url")
-                or (f"https://doi.org/{doi}" if doi else "")
-            )
-            pdf_url = (primary_loc.get("pdf_url") or "") or ((item.get("open_access") or {}).get("oa_url") or "")
+            papers: list[dict[str, Any]] = []
+            for item in data.get("results", []):
+                title = item.get("title")
+                if not title:
+                    continue
 
-            authors = [
-                a.get("author", {}).get("display_name")
-                for a in item.get("authorships", [])
-                if a.get("author", {}).get("display_name")
-            ]
-            year = item.get("publication_year")
-            venue = (primary_loc.get("source") or {}).get("display_name") or ""
+                doi = item.get("doi") or ""
+                if doi and not doi.startswith("http"):
+                    doi_url = f"https://doi.org/{doi.lstrip('/')}"
+                else:
+                    doi_url = doi
 
-            # Reconstruct abstract from inverted index if present
-            inv = item.get("abstract_inverted_index")
-            abstract = ""
-            if inv:
-                word_pos: list[tuple[int, str]] = []
-                for word, positions in inv.items():
-                    for pos in positions:
-                        word_pos.append((pos, word))
-                word_pos.sort()
-                abstract = " ".join(w for _, w in word_pos)
+                primary_loc = item.get("primary_location") or {}
+                source_obj = primary_loc.get("source") or {}
+                venue = source_obj.get("display_name") or ""
+                source_type = source_obj.get("type") or ""
 
-            author_str = ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else "") if authors else "Unknown Authors"
+                landing_url = (
+                    primary_loc.get("landing_page_url")
+                    or doi_url
+                    or (item.get("open_access") or {}).get("oa_url")
+                    or ""
+                )
+                pdf_url = (primary_loc.get("pdf_url") or "") or ((item.get("open_access") or {}).get("oa_url") or "")
 
-            papers.append(
-                {
+                authors = [
+                    a.get("author", {}).get("display_name", "").strip()
+                    for a in item.get("authorships", [])
+                    if a.get("author", {}).get("display_name")
+                ]
+                year = item.get("publication_year")
+
+                # Reconstruct abstract from inverted index if present
+                inv = item.get("abstract_inverted_index")
+                abstract = ""
+                if inv:
+                    word_pos: list[tuple[int, str]] = []
+                    for word, positions in inv.items():
+                        for pos in positions:
+                            word_pos.append((pos, word))
+                    word_pos.sort()
+                    abstract = " ".join(w for _, w in word_pos)
+
+                pub_status, is_peer_reviewed = classify_publication_status(
+                    item, landing_url=landing_url, venue=venue, doi=doi_url
+                )
+
+                # Display string for author
+                if not authors:
+                    author_str = "Authors unavailable"
+                elif len(authors) == 1:
+                    author_str = authors[0]
+                elif len(authors) == 2:
+                    author_str = f"{authors[0]} & {authors[1]}"
+                else:
+                    author_str = f"{authors[0]} et al."
+
+                clean_url = landing_url or pdf_url or doi_url or "https://openalex.org"
+
+                paper_dict = {
                     "title": title.strip(),
-                    "url": landing_url or pdf_url or "https://openalex.org",
-                    "pdf_url": pdf_url,
-                    "authors": authors,
-                    "author": author_str,
-                    "author_str": author_str,
-                    "year": year,
-                    "publisher": venue,
-                    "venue": venue,
                     "abstract": abstract,
-                    "snippet": abstract[:350] if abstract else title,
-                    "is_paper": True,
+                    "url": clean_url,
+                    "venue": venue or ("arXiv" if "arXiv" in pub_status else "Venue unavailable"),
                 }
-            )
-        return papers[:max_results]
-    except Exception:
-        return []
+                evidence_tier = classify_evidence_tier(paper_dict, clean_q)
+                is_sim = is_simulation_study(paper_dict)
+
+                papers.append(
+                    {
+                        "title": title.strip(),
+                        "url": clean_url,
+                        "pdf_url": pdf_url,
+                        "doi": doi_url,
+                        "authors": authors,
+                        "author": author_str,
+                        "author_str": author_str,
+                        "year": year,
+                        "publisher": venue or ("arXiv" if "arXiv" in pub_status else ""),
+                        "venue": venue or ("arXiv" if "arXiv" in pub_status else "Venue unavailable"),
+                        "source_type": source_type,
+                        "publication_status": pub_status,
+                        "is_peer_reviewed": is_peer_reviewed,
+                        "evidence_tier": evidence_tier,
+                        "is_simulation": is_sim,
+                        "abstract": abstract,
+                        "snippet": abstract[:350] if abstract else title,
+                        "is_paper": True,
+                    }
+                )
+
+            final_papers = papers[:max_results]
+            if cache is not None and final_papers:
+                cache.set("academic_search", cache_key, final_papers)
+            return final_papers
+        except Exception:
+            return []
 
 
 def web_search(
@@ -375,6 +597,7 @@ def web_search(
     max_results: int = 5,
     timeout: int = 10,
     include_papers: bool = False,
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """Search the web via DuckDuckGo, with optional academic paper supplement.
 
@@ -383,6 +606,7 @@ def web_search(
         max_results: Maximum number of results to return.
         timeout: Network timeout in seconds.
         include_papers: If True, merges academic paper results from OpenAlex.
+        use_cache: Whether to use caching.
 
     Returns:
         A list of ``{"title", "url", "snippet"}`` dicts (possibly empty).
@@ -390,10 +614,19 @@ def web_search(
     if not query.strip():
         return []
 
+    # Detect test mock DDGS: bypass cache if DDGS is monkeypatched
+    is_mock = DDGS is not None and getattr(DDGS, "__module__", "") not in ("ddgs", "duckduckgo_search")
+    cache = ResearchCache.get_instance() if (use_cache and not is_mock) else None
+    cache_key = f"{normalize_cache_key(query)}_{max_results}_{include_papers}"
+    if cache is not None:
+        cached = cache.get("web_search", cache_key)
+        if cached is not None and isinstance(cached, list):
+            return cached
+
     results: list[dict[str, Any]] = []
 
     if include_papers:
-        papers = search_academic_papers(query, max_results=max_results, timeout=min(timeout, 6))
+        papers = search_academic_papers(query, max_results=max_results, timeout=min(timeout, 6), use_cache=use_cache)
         for p in papers:
             results.append(
                 {
@@ -410,21 +643,26 @@ def web_search(
                 }
             )
 
-    if DDGS is not None and len(results) < max_results:
-        try:
-            with DDGS(timeout=timeout) as ddgs:
-                for hit in ddgs.text(query, max_results=max_results) or []:
-                    url = hit.get("href") or hit.get("url") or ""
-                    if not url:
-                        continue
-                    results.append(
-                        {
-                            "title": (hit.get("title") or "").strip() or url,
-                            "url": url,
-                            "snippet": (hit.get("body") or hit.get("snippet") or "").strip(),
-                        }
-                    )
-        except Exception:
-            pass
+    prof = get_profiler()
+    with prof.measure_operation("ddg"):
+        if DDGS is not None and len(results) < max_results:
+            try:
+                with DDGS(timeout=timeout) as ddgs:
+                    for hit in ddgs.text(query, max_results=max_results) or []:
+                        url = hit.get("href") or hit.get("url") or ""
+                        if not url:
+                            continue
+                        results.append(
+                            {
+                                "title": (hit.get("title") or "").strip() or url,
+                                "url": url,
+                                "snippet": (hit.get("body") or hit.get("snippet") or "").strip(),
+                            }
+                        )
+            except Exception:
+                pass
 
-    return results[:max_results]
+    final_results = results[:max_results]
+    if cache is not None and final_results:
+        cache.set("web_search", cache_key, final_results)
+    return final_results

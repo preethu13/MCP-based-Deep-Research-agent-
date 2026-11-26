@@ -110,3 +110,46 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if na == 0.0 or nb == 0.0:
         return 0.0
     return dot / (na * nb)
+
+
+class CachedEmbeddingProvider:
+    """Wraps any EmbeddingProvider with persistent hash-based batch caching."""
+
+    def __init__(self, provider: EmbeddingProvider, cache: Any | None = None) -> None:
+        self.provider = provider
+        if cache is None:
+            from src.memory.cache import ResearchCache
+
+            self.cache = ResearchCache.get_instance()
+        else:
+            self.cache = cache
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        from src.agent.profiler import get_profiler
+        from src.memory.cache import normalize_cache_key
+
+        prof = get_profiler()
+        with prof.measure_operation("embedding", count=len(texts)):
+            results: list[list[float] | None] = [None] * len(texts)
+            uncached_indices: list[int] = []
+            uncached_texts: list[str] = []
+
+            for i, text in enumerate(texts):
+                key = normalize_cache_key(text)
+                cached_vec = self.cache.get("embedding", key)
+                if cached_vec is not None:
+                    results[i] = cached_vec
+                else:
+                    uncached_indices.append(i)
+                    uncached_texts.append(text)
+
+            if uncached_texts:
+                computed_vectors = self.provider.embed(uncached_texts)
+                for idx, text, vec in zip(uncached_indices, uncached_texts, computed_vectors):
+                    results[idx] = vec
+                    self.cache.set("embedding", normalize_cache_key(text), vec, ttl_seconds=86400 * 7)
+
+            return [r for r in results if r is not None]

@@ -11,6 +11,9 @@ For each sub-question:
 
 from __future__ import annotations
 
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from src.agent.state import AgentDeps, ResearchState, make_event
@@ -24,18 +27,28 @@ from src.tools.search import (
 )
 
 _MIN_SCRAPE_WORDS = 5   # keep even short snippets — something beats nothing
-_MAX_CONTEXT_CHARS = 6000
+_MAX_CONTEXT_CHARS = 4000
 
 
 def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
     settings = deps.settings
-    session_id = state["session_id"]
     main_query = state.get("query", "")
-    research: list[dict[str, Any]] = []
+    sub_questions = state.get("sub_questions", [])
     trace = list(state.get("trace", []))
     warnings = list(state.get("warnings", []))
 
-    for sub_q in state.get("sub_questions", []):
+    def _score(c: dict[str, Any], sub_q: str) -> float:
+        m_s = score_paper_relevance(c, main_query)
+        if m_s < -10.0:
+            return m_s
+        s_s = score_paper_relevance(c, sub_q)
+        if s_s < -10.0:
+            return s_s
+        return max(m_s, s_s)
+
+    def _process_subquestion(sub_q: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+        local_trace: list[dict[str, Any]] = []
+        local_warnings: list[str] = []
         item: dict[str, Any] = {
             "sub_question": sub_q,
             "sources": [],
@@ -43,26 +56,16 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             "used_memory": False,
         }
 
-        def _score(c: dict[str, Any]) -> float:
-            m_s = score_paper_relevance(c, main_query)
-            if m_s < -10.0:
-                return m_s
-            s_s = score_paper_relevance(c, sub_q)
-            if s_s < -10.0:
-                return s_s
-            return max(m_s, s_s)
-
         # 1. Recall memory as supplementary context only (never replaces fresh search)
         raw_hits = deps.tools.recall_memory("all", sub_q, top_k=5)
-        # Validate memory relevance against the research topic before using
         validated_hits = [
             h for h in raw_hits
-            if _score({"title": h.get("content", "")[:120], "abstract": h.get("content", "")}) >= RELEVANCE_THRESHOLD
+            if _score({"title": h.get("content", "")[:120], "abstract": h.get("content", "")}, sub_q) >= RELEVANCE_THRESHOLD
         ]
         item["memory_hits"] = validated_hits
-        trace.append(
+        local_trace.append(
             make_event(
-                len(trace) + 1,
+                0,
                 "researcher",
                 "recall_memory",
                 f"Checked memory (supplementary) · {sub_q[:60]}",
@@ -71,15 +74,34 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             )
         )
 
-        # 2. Fresh Search & Retrieval (Primary evidence by default)
+        # 2. Fresh Search & Retrieval (Parallel OpenAlex + DuckDuckGo)
         search_q = clean_search_query(sub_q, main_query)
         academic_fn = getattr(deps.tools, "search_academic_papers", None)
 
         def _retrieve(q_str: str) -> list[dict[str, Any]]:
-            papers = []
-            if callable(academic_fn):
-                papers = academic_fn(q_str, max_results=settings.max_results_per_query)
-            webs = deps.tools.web_search(q_str, settings.max_results_per_query)
+            papers: list[dict[str, Any]] = []
+            webs: list[dict[str, Any]] = []
+
+            def _fetch_academic() -> list[dict[str, Any]]:
+                if callable(academic_fn):
+                    return academic_fn(q_str, max_results=settings.max_results_per_query)
+                return []
+
+            def _fetch_web() -> list[dict[str, Any]]:
+                return deps.tools.web_search(q_str, settings.max_results_per_query)
+
+            with ThreadPoolExecutor(max_workers=2) as retrieve_pool:
+                f_papers = retrieve_pool.submit(_fetch_academic)
+                f_webs = retrieve_pool.submit(_fetch_web)
+                try:
+                    papers = f_papers.result(timeout=settings.search_timeout + 2)
+                except Exception:
+                    papers = []
+                try:
+                    webs = f_webs.result(timeout=settings.search_timeout + 2)
+                except Exception:
+                    webs = []
+
             seen_u = set()
             merged = []
             for r in papers + webs:
@@ -92,7 +114,7 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
         candidates = _retrieve(search_q)
 
         # Score and filter candidates against main_query and sub_q
-        scored = [(_score(c), c) for c in candidates]
+        scored = [(_score(c, sub_q), c) for c in candidates]
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [c for s, c in scored if s >= RELEVANCE_THRESHOLD]
 
@@ -103,15 +125,14 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 if ref_q == search_q:
                     continue
                 ref_candidates = _retrieve(ref_q)
-                ref_scored = [(_score(c), c) for c in ref_candidates]
+                ref_scored = [(_score(c, sub_q), c) for c in ref_candidates]
                 ref_scored.sort(key=lambda x: x[0], reverse=True)
                 passing = [c for s, c in ref_scored if s >= RELEVANCE_THRESHOLD]
                 if passing:
                     results = passing
-                    break
-                    trace.append(
+                    local_trace.append(
                         make_event(
-                            len(trace) + 1,
+                            0,
                             "researcher",
                             "query_refinement",
                             f"Refined search query · {ref_q[:60]}",
@@ -121,9 +142,9 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                     )
                     break
 
-        trace.append(
+        local_trace.append(
             make_event(
-                len(trace) + 1,
+                0,
                 "researcher",
                 "web_search",
                 f"Retrieved academic sources · {search_q[:60]}",
@@ -132,19 +153,17 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             )
         )
 
-        # STRICT: Never include an irrelevant paper just to avoid returning zero results!
         if not results:
-            warnings.append(f"No relevant academic papers or web sources met the relevance threshold for: {sub_q}")
-            research.append(item)
-            continue
+            local_warnings.append(
+                f"No relevant academic papers or web sources met the relevance threshold for: {sub_q}"
+            )
+            return item, local_trace, local_warnings
 
         # 4. Gather source text (fast-path: papers with abstracts skip network scraping)
         targets = results[: settings.sources_to_scrape]
-        from concurrent.futures import ThreadPoolExecutor
 
         def _fetch_one(res: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             if res.get("abstract"):
-                # Paper with authentic abstract already in hand — instant retrieval
                 return res, {
                     "url": res["url"],
                     "title": res.get("title", ""),
@@ -158,14 +177,13 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 scraped = {"url": res["url"], "error": str(exc), "word_count": 0, "method_used": "failed"}
             return res, scraped
 
-        with ThreadPoolExecutor(max_workers=min(len(targets), 5)) as executor:
-            scraped_pairs = list(executor.map(_fetch_one, targets))
+        with ThreadPoolExecutor(max_workers=min(len(targets), 5)) as scrape_pool:
+            scraped_pairs = list(scrape_pool.map(_fetch_one, targets))
 
         for result, scraped in scraped_pairs:
             snippet_text = (result.get("snippet") or "").strip()
             page_text = (scraped.get("text") or "").strip() if not scraped.get("error") else ""
 
-            # Hybrid text: combine search snippet + scraped page text for maximum context quality
             if snippet_text and page_text and snippet_text not in page_text:
                 combined_text = f"Summary Snippet: {snippet_text}\n\nPage Text: {page_text[:_MAX_CONTEXT_CHARS]}"
             elif page_text:
@@ -178,7 +196,7 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
             method = scraped.get("method_used", "static")
             if scraped.get("error") or len(page_text.split()) < _MIN_SCRAPE_WORDS:
                 method = "snippet" if snippet_text else "failed"
-                warnings.append(
+                local_warnings.append(
                     f"Used search snippet for {result['url']}: "
                     f"{scraped.get('error', 'thin page content')}"
                 )
@@ -198,9 +216,9 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                     "is_paper": result.get("is_paper", False),
                 }
             )
-            trace.append(
+            local_trace.append(
                 make_event(
-                    len(trace) + 1,
+                    0,
                     "researcher",
                     "scrape_page",
                     f"Gathered source ({method})",
@@ -209,6 +227,22 @@ def researcher_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 )
             )
 
+        return item, local_trace, local_warnings
+
+    # Execute sub-questions concurrently
+    max_workers = min(len(sub_questions), getattr(settings, "max_concurrent_searches", 4))
+    if max_workers <= 1:
+        processed = [_process_subquestion(sq) for sq in sub_questions]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as worker_pool:
+            processed = list(worker_pool.map(_process_subquestion, sub_questions))
+
+    research: list[dict[str, Any]] = []
+    for item, sub_traces, sub_warnings in processed:
         research.append(item)
+        warnings.extend(sub_warnings)
+        for ev in sub_traces:
+            ev["step"] = len(trace) + 1
+            trace.append(ev)
 
     return {"research": research, "trace": trace, "warnings": warnings}

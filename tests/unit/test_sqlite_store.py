@@ -76,3 +76,19 @@ def test_memory_pointer_roundtrip(sqlite_store: SQLiteStore):
     assert ptr is not None
     assert ptr["summary_text"] == "a summary"
     assert ptr["session_id"] == "s1"
+
+
+def test_save_and_find_completed_session(sqlite_store: SQLiteStore):
+    sqlite_store.create_session("s10", "Context Rot in LLMs", "report")
+    mock_findings = [{"sub_question": "What is context rot?", "claim": "Context rot is degradation."}]
+    sqlite_store.save_session_result("s10", "# Context Rot Report\nFull content.", mock_findings)
+
+    found = sqlite_store.find_completed_session("Context Rot", output_format="report")
+    assert found is not None
+    assert found["session_id"] == "s10"
+    assert "Context Rot Report" in found["final_output"]
+    assert len(found["findings"]) == 1
+    assert found["findings"][0]["claim"] == "Context Rot is degradation." or "context rot" in found["findings"][0]["claim"].lower()
+
+    # Different format shouldn't match
+    assert sqlite_store.find_completed_session("Context Rot", output_format="brief") is None

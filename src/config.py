@@ -76,6 +76,12 @@ class Settings:
     search_timeout: int = 8
     scrape_timeout: int = 8
 
+    # Concurrency & Performance Optimization
+    max_concurrent_searches: int = 4
+    enable_cache: bool = True
+    cache_ttl_seconds: int = 86400
+    enable_playwright: bool = False
+
     # Scraping etiquette
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -107,6 +113,10 @@ def get_settings() -> Settings:
         recall_shortcircuit_hits=_get_int("RECALL_SHORTCIRCUIT_HITS", 2),
         search_timeout=_get_int("SEARCH_TIMEOUT", 8),
         scrape_timeout=_get_int("SCRAPE_TIMEOUT", 8),
+        max_concurrent_searches=_get_int("MAX_CONCURRENT_SEARCHES", 4),
+        enable_cache=_get_bool("ENABLE_CACHE", True),
+        cache_ttl_seconds=_get_int("CACHE_TTL_SECONDS", 86400),
+        enable_playwright=_get_bool("ENABLE_PLAYWRIGHT", False),
         user_agent=_get_str(
             "USER_AGENT",
             (

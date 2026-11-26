@@ -78,15 +78,23 @@ class OllamaLLM:
         }
         if max_tokens > 0:
             options["num_predict"] = max_tokens
-        resp = self._client().chat(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            options=options,
-        )
-        return str(_extract(resp, "message", "content")).strip()
+
+        from src.agent.profiler import get_profiler
+        prof = get_profiler()
+
+        with prof.measure_operation("llm_inference"):
+            resp = self._client().chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                options=options,
+            )
+            prompt_tokens = int(_extract(resp, "prompt_eval_count") or 0)
+            eval_tokens = int(_extract(resp, "eval_count") or 0)
+            prof.record_tokens(prompt_tokens=prompt_tokens, completion_tokens=eval_tokens)
+            return str(_extract(resp, "message", "content")).strip()
 
     def complete_json(self, system: str, user: str, temperature: float | None = None, max_tokens: int = 350) -> Any:
         raw = self.complete(system, user, temperature, max_tokens=max_tokens)

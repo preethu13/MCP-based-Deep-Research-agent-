@@ -22,10 +22,13 @@ _SYNTH_SYSTEM = (
     "CRITICAL RULES:\n"
     "1. Base all facts, definitions, mechanisms, and conclusions SOLELY on the provided source text. "
     "Do NOT fill in gaps or hallucinate using external training knowledge.\n"
-    "2. If the sources do not provide clear, credible evidence answering the question, state: "
+    "2. Separate established empirical findings from proposed architectures or frameworks. "
+    "Never describe simulation or synthetic benchmark results as real-world production evidence.\n"
+    "3. Never describe an individual proposed framework as a universally proven solution.\n"
+    "4. If the sources do not provide clear, credible evidence answering the question, state: "
     "'Insufficient direct evidence in the retrieved sources to address this question.'\n"
-    "3. Define concepts accurately using ONLY the definitions stated in the papers.\n"
-    "4. Do NOT output citation numbers like [1] or bracketed references; they are attached automatically."
+    "5. Define concepts accurately using ONLY the definitions stated in the papers.\n"
+    "6. Do NOT output citation numbers like [1] or bracketed references; they are attached automatically."
 )
 
 _COMPARE_SYSTEM = (
@@ -195,11 +198,18 @@ def synthesizer_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                 )
             )
         else:
-            context_parts = [
-                f"[{i}] {s.get('title', '')}\nURL: {s.get('url', '')}\n{s.get('text', '')}"
-                for i, s in enumerate(verified_sources, start=1)
-            ]
-            context_parts += [f"[memory] {m.get('content', '')}" for m in verified_memory]
+            context_parts = []
+            for i, s in enumerate(verified_sources, start=1):
+                title = s.get("title", "").strip()
+                author = s.get("author", "").strip()
+                year = s.get("year") or ""
+                meta = f"({author}, {year})" if author else f"({year})" if year else ""
+                body = (s.get("abstract") or s.get("text") or s.get("snippet") or "").strip()
+                if len(body) > 650:
+                    body = body[:650] + "…"
+                context_parts.append(f"[{i}] {title} {meta}\nEvidence: {body}")
+
+            context_parts += [f"[memory] {m.get('content', '')[:300]}" for m in verified_memory]
             valid_items.append((item, sub_q, verified_sources, "\n\n".join(context_parts)))
 
     # Batch synthesize all findings in a single fast LLM pass
@@ -252,15 +262,29 @@ def synthesizer_node(state: ResearchState, deps: AgentDeps) -> dict[str, Any]:
                     if len(summary_clean) > 800:
                         summary_clean = summary_clean[:800] + "…"
 
+                    pub_status = s.get("publication_status") or (
+                        "Preprint (arXiv)" if "arxiv" in s.get("url", "").lower()
+                        else "Peer-reviewed journal article" if s.get("venue") and s.get("venue") != "Venue unavailable"
+                        else "Unknown publication status"
+                    )
+                    is_peer = s.get("is_peer_reviewed", "Preprint" not in pub_status and pub_status != "Unknown publication status")
+                    tier = s.get("evidence_tier") or "Supporting evidence"
+                    is_sim = s.get("is_simulation", False)
+
                     papers.append(
                         {
                             "title": s.get("title", ""),
                             "url": s.get("url", ""),
                             "pdf_url": s.get("pdf_url", ""),
+                            "doi": s.get("doi", ""),
                             "author": s.get("author", ""),
                             "authors": s.get("authors", []),
                             "year": s.get("year"),
                             "venue": s.get("venue", ""),
+                            "publication_status": pub_status,
+                            "is_peer_reviewed": is_peer,
+                            "evidence_tier": tier,
+                            "is_simulation": is_sim,
                             "summary": summary_clean,
                             "is_paper": is_academic,
                         }
