@@ -103,11 +103,10 @@ export default function DashboardPage() {
             <button
               key={tag.id}
               onClick={() => setSelectedTag(tag.id)}
-              className={`px-3.5 py-1.5 rounded-full font-label-ui text-label-ui transition-all ${
-                selectedTag === tag.id
+              className={`px-3.5 py-1.5 rounded-full font-label-ui text-label-ui transition-all ${selectedTag === tag.id
                   ? "bg-surface-container-highest text-on-surface font-semibold"
                   : "bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
-              }`}
+                }`}
             >
               {tag.label}
             </button>
@@ -159,7 +158,7 @@ export default function DashboardPage() {
             </span>
           </div>
           <div className="flex items-center gap-space-md text-on-surface-variant font-label-ui text-label-ui">
-            <span>Private & Local</span>
+            <span>Private</span>
             <span>·</span>
             <span>Auto-Saved</span>
           </div>

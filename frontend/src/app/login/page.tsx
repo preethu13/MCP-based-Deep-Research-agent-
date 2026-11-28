@@ -53,7 +53,7 @@ export default function LoginPage() {
             <span className="material-symbols-outlined text-primary text-[26px]">hub</span>
           </div>
           <h1 className="text-2xl font-bold text-on-surface tracking-tight mt-2">
-            Welcome to Stitch MCP
+            Welcome to ResearchRe
           </h1>
           <p className="text-sm text-on-surface-variant max-w-xs">
             Sign in to access your autonomous research desk and saved sessions
